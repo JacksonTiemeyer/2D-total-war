@@ -111,6 +111,13 @@ DUEL_RANGE = 30
 DUEL_CIRCLE_RADIUS = 60
 DUEL_DURATION_MAX = 600  # frames (~10 seconds at 60fps)
 
+# Formations
+FORMATION_LINE_COLS_RATIO = 2.0      # wider than deep
+FORMATION_COLUMN_COLS_RATIO = 0.3    # deeper than wide
+FORMATION_SQUARE_COLS_RATIO = 1.0    # equal
+FORMATION_LOOSE_SPACING_MULT = 1.8   # wider spacing
+FORMATION_WEDGE_ANGLE = 0.6          # radians, half-angle of V
+
 # Campaign
 SETTLEMENT_RADIUS = 20
 ARMY_ICON_RADIUS = 12

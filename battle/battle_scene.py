@@ -13,7 +13,7 @@ from core.settings import (
 )
 from core.camera import Camera
 from core.utils import distance, point_in_rect
-from battle.squad import Squad, SquadState
+from battle.squad import Squad, SquadState, Formation
 from battle.general import General, DuelState
 
 
@@ -101,28 +101,36 @@ class BattleScene:
         start_y = BATTLE_MAP_HEIGHT // 2 - 300
         spacing_y = 80
 
-        for i, (unit_stats, count_unused) in enumerate(player_army.get("squads", [])):
+        for i, (unit_stats, soldier_count) in enumerate(player_army.get("squads", [])):
             y = start_y + i * spacing_y
-            squad = Squad(unit_stats, 0, start_x, y, facing_angle=0)
+            squad = Squad(unit_stats, 0, start_x, y, facing_angle=0,
+                          soldier_count=soldier_count if soldier_count != 1 else None)
             self.player_squads.append(squad)
 
         gen_data = player_army.get("general")
         if gen_data:
             gen = General(gen_data["name"], gen_data["stats"], 0,
                           start_x - 50, BATTLE_MAP_HEIGHT // 2)
+            if "xp" in gen_data:
+                gen.xp = gen_data["xp"]
+                gen.level = gen_data["level"]
             self.player_generals.append(gen)
 
         start_x = BATTLE_MAP_WIDTH - 300
         start_y = BATTLE_MAP_HEIGHT // 2 - 300
-        for i, (unit_stats, count_unused) in enumerate(enemy_army.get("squads", [])):
+        for i, (unit_stats, soldier_count) in enumerate(enemy_army.get("squads", [])):
             y = start_y + i * spacing_y
-            squad = Squad(unit_stats, 1, start_x, y, facing_angle=math.pi)
+            squad = Squad(unit_stats, 1, start_x, y, facing_angle=math.pi,
+                          soldier_count=soldier_count if soldier_count != 1 else None)
             self.enemy_squads.append(squad)
 
         gen_data = enemy_army.get("general")
         if gen_data:
             gen = General(gen_data["name"], gen_data["stats"], 1,
                           start_x + 50, BATTLE_MAP_HEIGHT // 2)
+            if "xp" in gen_data:
+                gen.xp = gen_data["xp"]
+                gen.level = gen_data["level"]
             self.enemy_generals.append(gen)
 
         self.all_squads = self.player_squads + self.enemy_squads
@@ -144,6 +152,24 @@ class BattleScene:
                 for sq in self.selected_squads:
                     if sq.is_ranged:
                         sq.fire_at_will = not sq.fire_at_will
+            # Formation hotkeys: Ctrl+1-5
+            elif event.key in (pygame.K_1, pygame.K_2, pygame.K_3, pygame.K_4, pygame.K_5):
+                ctrl = pygame.key.get_mods() & pygame.KMOD_CTRL
+                if ctrl and self.selected_squads:
+                    formations = [Formation.LINE, Formation.COLUMN, Formation.SQUARE,
+                                  Formation.LOOSE, Formation.WEDGE]
+                    idx = event.key - pygame.K_1
+                    if idx < len(formations):
+                        for sq in self.selected_squads:
+                            sq.set_formation(formations[idx])
+                elif not ctrl:
+                    # Speed controls (only when not holding ctrl)
+                    if event.key == pygame.K_1:
+                        self.speed_multiplier = 1
+                    elif event.key == pygame.K_2:
+                        self.speed_multiplier = 2
+                    elif event.key == pygame.K_3:
+                        self.speed_multiplier = 4
             # Ability hotkeys: Q, W, E, R
             elif event.key in (pygame.K_q, pygame.K_w, pygame.K_e, pygame.K_r):
                 self._handle_ability_key(event.key)
@@ -327,45 +353,240 @@ class BattleScene:
             self.result = BattleResult.PLAYER_LOSS
 
     def _enemy_ai(self):
-        for sq in self.enemy_squads:
-            if sq.is_destroyed or sq.state in (SquadState.ROUTED, SquadState.BROKEN):
-                continue
+        """Role-based AI: melee advances, cavalry flanks, ranged stays back."""
+        alive_enemy = [sq for sq in self.enemy_squads
+                       if not sq.is_destroyed and
+                       sq.state not in (SquadState.ROUTED, SquadState.BROKEN)]
+        alive_player = [sq for sq in self.player_squads if not sq.is_destroyed]
+        if not alive_enemy or not alive_player:
+            return
+
+        # Classify enemy squads by role
+        melee = [sq for sq in alive_enemy if not sq.is_ranged and not sq.is_cavalry]
+        cavalry = [sq for sq in alive_enemy if sq.is_cavalry]
+        ranged = [sq for sq in alive_enemy if sq.is_ranged and not sq.is_cavalry]
+
+        # Detect battle phase
+        engaged_count = sum(1 for sq in alive_enemy if sq.state == SquadState.FIGHTING)
+        phase = "opening" if engaged_count == 0 else "engaged"
+
+        # --- Melee infantry: advance toward nearest enemy ---
+        for sq in melee:
             if sq.state != SquadState.IDLE:
                 continue
-            best = None
-            best_dist = float("inf")
-            for psq in self.player_squads:
-                if psq.is_destroyed:
-                    continue
-                d = distance(sq.x, sq.y, psq.x, psq.y)
-                if d < best_dist:
-                    best_dist = d
-                    best = psq
+            best = self._ai_find_best_target(sq, alive_player, prefer_melee=True)
             if best:
                 sq.give_attack_order(best)
 
+        # --- Spearmen: if they can brace, hold position when cavalry is near ---
+        for sq in melee:
+            if sq.is_spear and sq.state == SquadState.IDLE:
+                # Check if any enemy cavalry is approaching
+                enemy_cav = [p for p in alive_player if p.is_cavalry]
+                for cav in enemy_cav:
+                    d = distance(sq.x, sq.y, cav.x, cav.y)
+                    if d < 300:
+                        # Stay put and brace! Don't give attack order
+                        break
+
+        # --- Cavalry: wait for engagement, then flank ---
+        for sq in cavalry:
+            if sq.state != SquadState.IDLE:
+                continue
+            if phase == "opening":
+                # Opening: hold cavalry back, wait for melee to engage
+                # Only engage if no melee units to screen
+                if melee:
+                    continue
+            # Find best flanking target (prefer enemies already fighting)
+            target = self._ai_find_flank_target(sq, alive_player)
+            if target:
+                sq.give_attack_order(target)
+
+        # --- Ranged: stay behind melee line, pick high-value targets ---
+        for sq in ranged:
+            if sq.state != SquadState.IDLE:
+                continue
+            # Target priority: other ranged > low-morale > nearest
+            target = self._ai_find_ranged_target(sq, alive_player)
+            if target:
+                d = distance(sq.x, sq.y, target.x, target.y)
+                if d <= sq.unit_stats.range_distance:
+                    sq.give_attack_order(target)
+                else:
+                    # Move toward range but not too close
+                    tx, ty = target.center
+                    # Stop at max range distance
+                    dx, dy = tx - sq.x, ty - sq.y
+                    dist = max(1, (dx**2 + dy**2)**0.5)
+                    approach_dist = dist - sq.unit_stats.range_distance * 0.8
+                    if approach_dist > 0:
+                        nx, ny = dx / dist, dy / dist
+                        sq.give_move_order(sq.x + nx * approach_dist,
+                                           sq.y + ny * approach_dist)
+
+        # --- General AI ---
         for g in self.enemy_generals:
             if not g.alive or g.duel_state == DuelState.ACTIVE:
                 continue
-            # Enemy generals auto-use abilities
-            if g.available_abilities and random.random() < 0.02:
-                ready = [i for i, a in enumerate(g.available_abilities) if a.ready]
-                if ready:
-                    idx = random.choice(ready)
-                    g.activate_ability(idx, self.enemy_squads, self.player_squads)
 
-            for pg in self.player_generals:
-                if pg.alive and pg.duel_state == DuelState.NONE:
-                    d = distance(g.x, g.y, pg.x, pg.y)
-                    if d < 200:
-                        g.challenge_duel(pg)
-                        break
-            else:
-                if self.player_squads:
-                    targets = [sq for sq in self.player_squads if not sq.is_destroyed]
-                    if targets:
-                        t = random.choice(targets)
-                        g.give_move_order(t.x, t.y)
+            # Smart ability usage based on general type
+            self._ai_use_general_abilities(g)
+
+            # Champion: seek duels
+            if g.general_type == "Champion":
+                for pg in self.player_generals:
+                    if pg.alive and pg.duel_state == DuelState.NONE:
+                        d = distance(g.x, g.y, pg.x, pg.y)
+                        if d < 200:
+                            g.challenge_duel(pg)
+                            break
+
+            # Move general toward the battle
+            if alive_player:
+                targets = [sq for sq in alive_player if sq.state == SquadState.FIGHTING]
+                if not targets:
+                    targets = alive_player
+                if targets:
+                    t = min(targets, key=lambda s: distance(g.x, g.y, s.x, s.y))
+                    g.give_move_order(t.x, t.y)
+
+    def _ai_find_best_target(self, sq, enemies, prefer_melee=False):
+        """Find best target for a melee unit."""
+        best = None
+        best_score = -float("inf")
+        for e in enemies:
+            d = distance(sq.x, sq.y, e.x, e.y)
+            # Score: prefer close, low morale, and already-fighting enemies
+            score = -d * 0.1
+            if e.morale < 40:
+                score += 50  # attack wavering enemies
+            if e.state == SquadState.FIGHTING:
+                score += 30  # pile on engaged enemies
+            if prefer_melee and e.is_ranged:
+                score += 20  # melee should try to reach ranged
+            if score > best_score:
+                best_score = score
+                best = e
+        return best
+
+    def _ai_find_flank_target(self, cavalry_sq, enemies):
+        """Find best target for cavalry to flank."""
+        best = None
+        best_score = -float("inf")
+        for e in enemies:
+            d = distance(cavalry_sq.x, cavalry_sq.y, e.x, e.y)
+            score = -d * 0.05
+            # Strongly prefer enemies already engaged in melee (rear charge!)
+            if e.state == SquadState.FIGHTING:
+                score += 100
+            # Avoid braced spearmen
+            if e.is_braced or (e.is_spear and e.state == SquadState.IDLE):
+                score -= 200
+            # Prefer low morale (push them to rout)
+            if e.morale < 50:
+                score += 40
+            # Prefer ranged units (they're squishy)
+            if e.is_ranged:
+                score += 30
+            if score > best_score:
+                best_score = score
+                best = e
+        return best
+
+    def _ai_find_ranged_target(self, ranged_sq, enemies):
+        """Find best target for ranged units."""
+        in_range = [e for e in enemies
+                    if distance(ranged_sq.x, ranged_sq.y, e.x, e.y)
+                    <= ranged_sq.unit_stats.range_distance * 1.2]
+        if not in_range:
+            # Target nearest
+            return min(enemies, key=lambda e: distance(ranged_sq.x, ranged_sq.y, e.x, e.y))
+
+        best = None
+        best_score = -float("inf")
+        for e in in_range:
+            score = 0
+            # Target priority: ranged > cavalry > low armor > low morale
+            if e.is_ranged:
+                score += 40
+            if e.is_cavalry:
+                score += 20
+            if e.unit_stats.armor < 15:
+                score += 30  # easy to damage
+            if e.morale < 50:
+                score += 25  # push them over the edge
+            # Prefer larger groups (more value per volley)
+            score += e.alive_count * 2
+            if score > best_score:
+                best_score = score
+                best = e
+        return best
+
+    def _ai_use_general_abilities(self, general):
+        """Smart ability usage for enemy generals."""
+        avail = general.available_abilities
+        ready = [(i, a) for i, a in enumerate(avail) if a.ready]
+        if not ready:
+            return
+
+        friendly = self.enemy_squads
+        enemy = self.player_squads
+
+        for idx, ability in ready:
+            name = ability.name
+
+            # Commander abilities
+            if name == "Rally the Troops":
+                # Use when squads are low morale
+                low_morale = [sq for sq in friendly if not sq.is_destroyed and sq.morale < 40]
+                if low_morale:
+                    general.activate_ability(idx, friendly, enemy)
+                    return
+            elif name == "Second Wind":
+                # Use when squads are exhausted
+                tired = [sq for sq in friendly if not sq.is_destroyed and sq.exhaustion > 60]
+                if tired:
+                    general.activate_ability(idx, friendly, enemy)
+                    return
+            elif name == "Hold the Line":
+                # Use when multiple squads near breaking
+                breaking = [sq for sq in friendly if not sq.is_destroyed and sq.morale < 30]
+                if len(breaking) >= 2:
+                    general.activate_ability(idx, friendly, enemy)
+                    return
+
+            # Champion abilities
+            elif name == "Bloodlust":
+                # Use before engaging
+                if general.duel_state == DuelState.ACTIVE or any(
+                    distance(general.x, general.y, e.x, e.y) < 100
+                    for e in enemy if not e.is_destroyed
+                ):
+                    general.activate_ability(idx, friendly, enemy)
+                    return
+            elif name == "Intimidate":
+                # Use when near enemy clusters
+                nearby_enemy = [e for e in enemy if not e.is_destroyed and
+                                distance(general.x, general.y, e.x, e.y) < ability.radius]
+                if len(nearby_enemy) >= 2:
+                    general.activate_ability(idx, friendly, enemy)
+                    return
+
+            # Strategist abilities
+            elif name == "Precision Volley":
+                # Use when ranged units are firing
+                ranged_firing = [sq for sq in friendly if sq.is_ranged and
+                                 sq.state == SquadState.FIRING and not sq.is_destroyed]
+                if ranged_firing:
+                    general.activate_ability(idx, friendly, enemy)
+                    return
+            elif name == "Weaken Resolve":
+                # Target enemy with lowest morale
+                targets = [e for e in enemy if not e.is_destroyed and e.morale < 50]
+                if targets:
+                    general.activate_ability(idx, friendly, enemy)
+                    return
 
     def draw(self, surface):
         surface.fill((90, 140, 60))

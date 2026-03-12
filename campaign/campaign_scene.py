@@ -476,8 +476,10 @@ class CampaignScene:
         surface.blit(header2, (panel_x + 10, y))
         y += 22
 
-        for i, (stats, _) in enumerate(self.player_army.squads):
-            text = small.render(f"  {stats.name} ({stats.squad_size}) - Upkeep: {stats.upkeep}",
+        for i, csq in enumerate(self.player_army.squads):
+            stats = csq.unit_stats
+            count_str = f"{csq.current_count}/{csq.max_count}" if csq.is_understrength else str(csq.current_count)
+            text = small.render(f"  {stats.name} ({count_str}) - Upkeep: {stats.upkeep}",
                                 True, WHITE)
             surface.blit(text, (panel_x + 10, y))
             # Disband button

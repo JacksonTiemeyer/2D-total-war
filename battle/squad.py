@@ -16,9 +16,27 @@ from core.settings import (
     EXHAUSTION_MORALE_THRESHOLD, EXHAUSTION_MORALE_DRAIN,
     EXHAUSTION_SPEED_PENALTY,
     BRACE_CHARGE_MORALE_SHOCK, BRACE_MIN_IDLE_FRAMES,
+    FORMATION_LOOSE_SPACING_MULT,
 )
 from core.utils import distance, angle_between, normalize, clamp
 from battle.soldier import Soldier
+
+
+class Formation:
+    LINE = "line"         # default: wide, shallow
+    COLUMN = "column"     # deep, narrow: +20% charge bonus
+    SQUARE = "square"     # dense block: +30% vs cavalry, immune to rear, -25% speed
+    LOOSE = "loose"       # spread out: -40% ranged damage taken, -20% melee defense
+    WEDGE = "wedge"       # V-shape: +40% charge bonus, -15% defense
+
+    # (charge_mult, defense_mult, speed_mult, ranged_damage_taken_mult, rear_immune)
+    MODIFIERS = {
+        "line":   (1.0, 1.0, 1.0, 1.0, False),
+        "column": (1.2, 1.0, 1.0, 1.0, False),
+        "square": (1.0, 1.3, 0.75, 0.85, True),
+        "loose":  (1.0, 0.8, 1.0, 0.6, False),
+        "wedge":  (1.4, 0.85, 1.05, 1.0, False),
+    }
 
 
 class SquadState:
@@ -32,7 +50,7 @@ class SquadState:
 
 
 class Squad:
-    def __init__(self, unit_stats, team, x, y, facing_angle=0.0):
+    def __init__(self, unit_stats, team, x, y, facing_angle=0.0, soldier_count=None):
         self.unit_stats = unit_stats
         self.team = team
         self.x = x
@@ -50,6 +68,7 @@ class Squad:
         self.fire_at_will = True
         self.charging = False
         self.charge_timer = 0
+        self.formation = Formation.LINE
 
         # Exhaustion
         self.exhaustion = 0.0
@@ -67,29 +86,79 @@ class Squad:
             "charge_mult": 1.0, "terrain_type": None,
         }
 
-        # Create soldiers in formation
+        # Create soldiers in formation (use custom count for understrength squads)
         self.soldiers = []
-        self._create_formation(unit_stats)
+        actual_count = soldier_count if soldier_count is not None else unit_stats.squad_size
+        self._create_formation(unit_stats, actual_count)
 
         # Track for morale
         self.initial_count = len(self.soldiers)
         self.kills = 0
 
-    def _create_formation(self, stats):
-        count = stats.squad_size
-        cols = max(1, int(math.sqrt(count * 2)))  # wider than deep
-        rows = math.ceil(count / cols)
-        for i in range(count):
-            row = i // cols
-            col = i % cols
-            ox = (col - cols / 2.0 + 0.5) * SOLDIER_SPACING
-            oy = (row - rows / 2.0 + 0.5) * SOLDIER_SPACING
+    def _create_formation(self, stats, count=None):
+        if count is None:
+            count = stats.squad_size
+        offsets = self._compute_formation_offsets(count, self.formation)
+        for ox, oy in offsets:
             sx = self.x + ox
             sy = self.y + oy
             soldier = Soldier(sx, sy, stats, self.team)
             soldier.formation_x = ox
             soldier.formation_y = oy
             self.soldiers.append(soldier)
+
+    def _compute_formation_offsets(self, count, formation):
+        """Compute (ox, oy) offsets for each soldier in the given formation."""
+        spacing = SOLDIER_SPACING
+        if formation == Formation.LOOSE:
+            spacing *= FORMATION_LOOSE_SPACING_MULT
+
+        if formation == Formation.WEDGE:
+            return self._wedge_offsets(count, spacing)
+
+        # Grid-based formations
+        if formation == Formation.LINE:
+            cols = max(1, int(math.sqrt(count * 2)))
+        elif formation == Formation.COLUMN:
+            cols = max(1, int(math.sqrt(count * 0.3)))
+        elif formation == Formation.SQUARE:
+            cols = max(1, int(math.sqrt(count)))
+        else:  # loose or default
+            cols = max(1, int(math.sqrt(count * 2)))
+
+        offsets = []
+        rows = math.ceil(count / cols)
+        for i in range(count):
+            row = i // cols
+            col = i % cols
+            ox = (col - cols / 2.0 + 0.5) * spacing
+            oy = (row - rows / 2.0 + 0.5) * spacing
+            offsets.append((ox, oy))
+        return offsets
+
+    def _wedge_offsets(self, count, spacing):
+        """V-shape wedge formation."""
+        offsets = [(0, 0)]  # leader at tip
+        row = 1
+        placed = 1
+        while placed < count:
+            for side in [-1, 1]:
+                if placed >= count:
+                    break
+                ox = side * row * spacing * 0.7
+                oy = row * spacing * 0.8
+                offsets.append((ox, oy))
+                placed += 1
+            row += 1
+        return offsets
+
+    def _reposition_formation(self):
+        """Recompute formation offsets for living soldiers."""
+        alive = self.alive_soldiers
+        offsets = self._compute_formation_offsets(len(alive), self.formation)
+        for s, (ox, oy) in zip(alive, offsets):
+            s.formation_x = ox
+            s.formation_y = oy
 
     @property
     def alive_soldiers(self):
@@ -126,25 +195,36 @@ class Squad:
             return "Spent"
 
     @property
+    def formation_mods(self):
+        return Formation.MODIFIERS.get(self.formation, (1.0, 1.0, 1.0, 1.0, False))
+
+    @property
     def effective_speed(self):
-        """Speed reduced by exhaustion and terrain."""
+        """Speed reduced by exhaustion, terrain, and formation."""
         penalty = (self.exhaustion / EXHAUSTION_MAX) * EXHAUSTION_SPEED_PENALTY
         base = self.unit_stats.speed * (1.0 - penalty)
-        return base * self.terrain_mods.get("speed_mult", 1.0)
+        _, _, speed_mult, _, _ = self.formation_mods
+        return base * self.terrain_mods.get("speed_mult", 1.0) * speed_mult
+
+    def set_formation(self, formation):
+        """Change formation and reposition soldiers."""
+        self.formation = formation
+        self._reposition_formation()
 
     def compute_flank_multiplier(self, attacker_squad):
         """Determine flank/rear bonus based on angle of attack."""
         if not attacker_squad:
             return 1.0
+        _, _, _, _, rear_immune = self.formation_mods
         ax, ay = attacker_squad.center
         mx, my = self.center
-        # Angle from defender's facing to attacker
         attack_angle = angle_between(mx, my, ax, ay)
         angle_diff = abs(attack_angle - self.facing_angle)
-        # Normalize to [0, pi]
         while angle_diff > math.pi:
             angle_diff = abs(angle_diff - 2 * math.pi)
         if angle_diff >= REAR_ANGLE_THRESHOLD:
+            if rear_immune:
+                return FLANK_DAMAGE_BONUS  # square downgrades rear to flank
             return REAR_DAMAGE_BONUS
         elif angle_diff >= FLANK_ANGLE_THRESHOLD:
             return FLANK_DAMAGE_BONUS
@@ -325,7 +405,8 @@ class Squad:
         self.target_y = ty
         self.facing_angle = angle_between(self.x, self.y, tx, ty)
         charge_terrain = self.terrain_mods.get("charge_mult", 1.0)
-        speed_mult = (1.5 if self.is_cavalry else 1.2) * charge_terrain
+        charge_form, _, _, _, _ = self.formation_mods
+        speed_mult = (1.5 if self.is_cavalry else 1.2) * charge_terrain * charge_form
         self._do_movement(speed_mult=speed_mult)
 
     def _handle_brace_impact(self):
@@ -361,8 +442,10 @@ class Squad:
         elif flank_mult >= FLANK_DAMAGE_BONUS:
             self.target_squad.being_flanked = True
 
-        # Terrain: defender gets melee defense bonus in forest
+        # Terrain + formation defense modifiers
         def_mult = self.target_squad.terrain_mods.get("melee_defense_mult", 1.0)
+        _, target_def_form, _, _, _ = self.target_squad.formation_mods
+        def_mult *= target_def_form
 
         for s in self.alive_soldiers:
             if s.attack_cooldown > 0:
@@ -546,6 +629,8 @@ class Squad:
                 label += " WAVERING"
             elif self.is_braced:
                 label += " BRACED"
+            if self.formation != Formation.LINE:
+                label += f" <{self.formation.upper()}>"
             terrain_type = self.terrain_mods.get("terrain_type")
             if terrain_type:
                 label += f" [{terrain_type.upper()}]"

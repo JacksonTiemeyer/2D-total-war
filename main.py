@@ -210,7 +210,6 @@ class Game:
     def _resolve_battle(self):
         """Apply battle results to campaign and return."""
         if self.is_skirmish:
-            # Skirmish - just go back to menu
             self.battle = None
             self.battle_stats = None
             self.is_skirmish = False
@@ -221,12 +220,11 @@ class Game:
             if self.current_enemy:
                 self.campaign.remove_army(self.current_enemy)
                 self.campaign.player_army.gold += self.battle_stats.get("loot_gold", 0)
+            # Apply casualties to player army (survivors persist)
+            self.campaign.player_army.apply_battle_results(self.battle)
         else:
-            if self.campaign.player_army.squads:
-                losses = len(self.campaign.player_army.squads) // 2
-                for _ in range(max(1, losses)):
-                    if self.campaign.player_army.squads:
-                        self.campaign.player_army.squads.pop()
+            # Defeat: apply casualties (survivors persist, but losses are real)
+            self.campaign.player_army.apply_battle_results(self.battle)
 
         self.current_enemy = None
         self.battle = None
@@ -303,15 +301,17 @@ class Game:
         header = small.render("Your Forces:", True, (100, 150, 255))
         self.screen.blit(header, (100, y))
         y += 25
-        for stats, _ in pa.squads:
+        for csq in pa.squads:
+            stats = csq.unit_stats
+            count_str = f"{csq.current_count}/{csq.max_count}" if csq.is_understrength else str(csq.current_count)
             text = tiny.render(
-                f"  {stats.name} ({stats.squad_size}) - ATK:{stats.melee_attack} "
+                f"  {stats.name} ({count_str}) - ATK:{stats.melee_attack} "
                 f"DEF:{stats.melee_defense}"
                 f"{' RNG:'+str(stats.ranged_attack) if stats.ranged_attack else ''}",
                 True, WHITE)
             self.screen.blit(text, (110, y))
             y += 20
-        gen = tiny.render(f"  General: {pa.general_name} ({pa.general_stats.name})", True, GOLD)
+        gen = tiny.render(f"  General: {pa.general_name} ({pa.general_stats.name}) Lv{pa.general_level}", True, GOLD)
         self.screen.blit(gen, (110, y))
         y += 20
         strength = small.render(f"  Total Strength: {pa.army_strength}", True, (100, 200, 100))
@@ -323,9 +323,11 @@ class Game:
         header2 = small.render("Enemy Forces:", True, (255, 100, 100))
         self.screen.blit(header2, (SCREEN_WIDTH - 400, y))
         y += 25
-        for stats, _ in ea.squads:
+        for csq in ea.squads:
+            stats = csq.unit_stats
+            count_str = f"{csq.current_count}/{csq.max_count}" if csq.is_understrength else str(csq.current_count)
             text = tiny.render(
-                f"  {stats.name} ({stats.squad_size}) - ATK:{stats.melee_attack} "
+                f"  {stats.name} ({count_str}) - ATK:{stats.melee_attack} "
                 f"DEF:{stats.melee_defense}"
                 f"{' RNG:'+str(stats.ranged_attack) if stats.ranged_attack else ''}",
                 True, WHITE)
