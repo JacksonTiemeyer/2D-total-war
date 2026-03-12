@@ -10,6 +10,7 @@ from core.settings import (
     EXHAUSTION_MAX,
     HILL_RANGED_BONUS, HILL_CHARGE_DOWNHILL_BONUS, HILL_SPEED_UPHILL_PENALTY,
     FOREST_CAVALRY_SPEED_MULT, FOREST_RANGED_ACCURACY_MULT, FOREST_MELEE_DEFENSE_BONUS,
+    VISION_INFANTRY, VISION_CAVALRY, FOG_ALPHA,
 )
 from core.camera import Camera
 from core.utils import distance, point_in_rect
@@ -45,6 +46,7 @@ class BattleScene:
         self.paused = False
         self.battle_timer = 0
         self.speed_multiplier = 1
+        self.fog_enabled = True  # fog of war toggle
 
         # Terrain features
         self.terrain = []
@@ -96,6 +98,77 @@ class BattleScene:
             mods["melee_defense_mult"] = FOREST_MELEE_DEFENSE_BONUS
         return mods
 
+    def _is_los_blocked(self, x1, y1, x2, y2):
+        """Check if line of sight is blocked by a forest."""
+        for t in self.terrain:
+            if t["type"] != "forest":
+                continue
+            rx, ry, rw, rh = t["rect"]
+            # Simple: check if the midpoint of the LOS line falls inside a forest
+            # and neither endpoint is in that same forest
+            mx, my = (x1 + x2) / 2, (y1 + y2) / 2
+            if rx <= mx <= rx + rw and ry <= my <= ry + rh:
+                # Midpoint is in forest — blocked unless both endpoints are too
+                p1_in = rx <= x1 <= rx + rw and ry <= y1 <= ry + rh
+                p2_in = rx <= x2 <= rx + rw and ry <= y2 <= ry + rh
+                if not (p1_in and p2_in):
+                    return True
+        return False
+
+    def _compute_visibility(self):
+        """Compute which enemy squads are visible to the player."""
+        if not self.fog_enabled:
+            for sq in self.enemy_squads:
+                sq.visible = True
+            for g in self.enemy_generals:
+                g.visible = True
+            return
+
+        # Check if any player general has Scout Report active
+        scout_active = any(g._scout_active for g in self.player_generals if g.alive)
+        if scout_active:
+            for sq in self.enemy_squads:
+                sq.visible = True
+            for g in self.enemy_generals:
+                g.visible = True
+            return
+
+        # Build list of (x, y, vision_radius) for all player units
+        vision_sources = []
+        for sq in self.player_squads:
+            if not sq.is_destroyed:
+                cx, cy = sq.center
+                vision_sources.append((cx, cy, sq.vision_radius))
+        for g in self.player_generals:
+            if g.alive:
+                base_v = VISION_CAVALRY  # generals see far
+                vision_sources.append((g.x, g.y, base_v))
+
+        # Check each enemy squad
+        for sq in self.enemy_squads:
+            if sq.is_destroyed:
+                sq.visible = False
+                continue
+            cx, cy = sq.center
+            sq.visible = False
+            for vx, vy, vr in vision_sources:
+                d = distance(vx, vy, cx, cy)
+                if d <= vr and not self._is_los_blocked(vx, vy, cx, cy):
+                    sq.visible = True
+                    break
+
+        # Check each enemy general
+        for g in self.enemy_generals:
+            if not g.alive:
+                g.visible = False
+                continue
+            g.visible = False
+            for vx, vy, vr in vision_sources:
+                d = distance(vx, vy, g.x, g.y)
+                if d <= vr and not self._is_los_blocked(vx, vy, g.x, g.y):
+                    g.visible = True
+                    break
+
     def _deploy_armies(self, player_army, enemy_army):
         start_x = 300
         start_y = BATTLE_MAP_HEIGHT // 2 - 300
@@ -142,17 +215,13 @@ class BattleScene:
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_SPACE:
                 self.paused = not self.paused
-            elif event.key == pygame.K_1:
-                self.speed_multiplier = 1
-            elif event.key == pygame.K_2:
-                self.speed_multiplier = 2
-            elif event.key == pygame.K_3:
-                self.speed_multiplier = 4
             elif event.key == pygame.K_f:
                 for sq in self.selected_squads:
                     if sq.is_ranged:
                         sq.fire_at_will = not sq.fire_at_will
-            # Formation hotkeys: Ctrl+1-5
+            elif event.key == pygame.K_v:
+                self.fog_enabled = not self.fog_enabled
+            # Number keys: Ctrl+1-5 = formations, plain 1-3 = speed
             elif event.key in (pygame.K_1, pygame.K_2, pygame.K_3, pygame.K_4, pygame.K_5):
                 ctrl = pygame.key.get_mods() & pygame.KMOD_CTRL
                 if ctrl and self.selected_squads:
@@ -163,7 +232,6 @@ class BattleScene:
                         for sq in self.selected_squads:
                             sq.set_formation(formations[idx])
                 elif not ctrl:
-                    # Speed controls (only when not holding ctrl)
                     if event.key == pygame.K_1:
                         self.speed_multiplier = 1
                     elif event.key == pygame.K_2:
@@ -265,7 +333,7 @@ class BattleScene:
 
         target_squad = None
         for sq in self.enemy_squads:
-            if sq.is_destroyed:
+            if sq.is_destroyed or (self.fog_enabled and not sq.visible):
                 continue
             bbox = sq.get_bounding_box()
             if point_in_rect(wx, wy, *bbox):
@@ -274,7 +342,7 @@ class BattleScene:
 
         target_general = None
         for g in self.enemy_generals:
-            if not g.alive:
+            if not g.alive or (self.fog_enabled and not g.visible):
                 continue
             if distance(wx, wy, g.x, g.y) < 20:
                 target_general = g
@@ -308,6 +376,9 @@ class BattleScene:
         self.battle_timer += 1
 
     def _tick(self):
+        # Compute fog of war visibility
+        self._compute_visibility()
+
         for sq in self.all_squads:
             sq.terrain_mods = self.get_terrain_modifiers(sq)
             sq.update(self.all_squads)
@@ -612,12 +683,18 @@ class BattleScene:
                 text = font.render(t["type"].title(), True, (200, 200, 200))
                 surface.blit(text, (screen_pos[0] + 5, screen_pos[1] + 5))
 
+        # Draw fog overlay behind enemy units
+        if self.fog_enabled:
+            self._draw_fog(surface)
+
         for sq in self.all_squads:
             if not sq.is_destroyed:
-                sq.draw(surface, self.camera)
+                fog_hidden = (sq.team != 0 and not sq.visible and self.fog_enabled)
+                sq.draw(surface, self.camera, fog_hidden=fog_hidden)
 
         for g in self.all_generals:
-            g.draw(surface, self.camera)
+            fog_hidden = (g.team != 0 and not g.visible and self.fog_enabled)
+            g.draw(surface, self.camera, fog_hidden=fog_hidden)
 
         if self.selecting:
             sx = min(self.select_start[0], self.select_end[0])
@@ -631,6 +708,32 @@ class BattleScene:
                 pygame.draw.rect(surface, (100, 200, 100), (sx, sy, sw, sh), 1)
 
         self._draw_hud(surface)
+
+    def _draw_fog(self, surface):
+        """Draw fog of war overlay with vision holes for player units."""
+        # Create a dark overlay covering the whole screen
+        fog = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        fog.fill((0, 0, 0, FOG_ALPHA))
+
+        # Cut holes for each player vision source
+        for sq in self.player_squads:
+            if sq.is_destroyed:
+                continue
+            cx, cy = sq.center
+            sx, sy = self.camera.world_to_screen(cx, cy)
+            r = self.camera.scale(sq.vision_radius)
+            if r > 2:
+                pygame.draw.circle(fog, (0, 0, 0, 0), (int(sx), int(sy)), int(r))
+
+        for g in self.player_generals:
+            if not g.alive:
+                continue
+            sx, sy = self.camera.world_to_screen(g.x, g.y)
+            r = self.camera.scale(VISION_CAVALRY)
+            if r > 2:
+                pygame.draw.circle(fog, (0, 0, 0, 0), (int(sx), int(sy)), int(r))
+
+        surface.blit(fog, (0, 0))
 
     def _draw_hud(self, surface):
         font = pygame.font.SysFont(None, 20)
@@ -667,8 +770,8 @@ class BattleScene:
 
         help_y = SCREEN_HEIGHT - 24
         help_text = small_font.render(
-            "[SPACE] Pause  [1/2/3] Speed  [F] Fire  [Q/W/E/R] Abilities  "
-            "[LMB] Select  [RMB] Order  [MMB] Pan  [Scroll] Zoom",
+            "[SPACE] Pause  [1/2/3] Speed  [F] Fire  [V] Fog  [Q/W/E/R] Abilities  "
+            "[Ctrl+1-5] Formation  [LMB] Select  [RMB] Order",
             True, (180, 180, 180))
         surface.blit(help_text, (10, help_y))
 

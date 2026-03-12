@@ -79,6 +79,7 @@ class General:
         self._sapping_fire = False
         self._scout_active = False
         self._all_enemy_generals = []  # set by battle scene
+        self.visible = True  # fog of war
 
     @property
     def available_abilities(self):
@@ -289,8 +290,8 @@ class General:
                 continue
             sq.apply_morale_modifier(-MORALE_GENERAL_DEATH_PENALTY)
 
-    def draw(self, surface, camera):
-        if not self.alive:
+    def draw(self, surface, camera, fog_hidden=False):
+        if not self.alive or fog_hidden:
             return
 
         sx, sy = camera.world_to_screen(self.x, self.y)

@@ -118,6 +118,13 @@ FORMATION_SQUARE_COLS_RATIO = 1.0    # equal
 FORMATION_LOOSE_SPACING_MULT = 1.8   # wider spacing
 FORMATION_WEDGE_ANGLE = 0.6          # radians, half-angle of V
 
+# Vision / Fog of War
+VISION_INFANTRY = 200
+VISION_CAVALRY = 250
+VISION_HILL_BONUS = 1.5       # +50% vision on hills
+VISION_FOREST_BLOCK = True    # forests block LOS
+FOG_ALPHA = 140               # darkness of unexplored fog
+
 # Campaign
 SETTLEMENT_RADIUS = 20
 ARMY_ICON_RADIUS = 12

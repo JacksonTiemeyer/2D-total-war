@@ -17,6 +17,7 @@ from core.settings import (
     EXHAUSTION_SPEED_PENALTY,
     BRACE_CHARGE_MORALE_SHOCK, BRACE_MIN_IDLE_FRAMES,
     FORMATION_LOOSE_SPACING_MULT,
+    VISION_INFANTRY, VISION_CAVALRY, VISION_HILL_BONUS,
 )
 from core.utils import distance, angle_between, normalize, clamp
 from battle.soldier import Soldier
@@ -78,6 +79,9 @@ class Squad:
         self.being_flanked = False
         self.being_rear_charged = False
         self.is_braced = False
+
+        # Fog of war visibility (set each frame by battle scene)
+        self.visible = True
 
         # Terrain modifiers (set each frame by battle scene)
         self.terrain_mods = {
@@ -197,6 +201,17 @@ class Squad:
     @property
     def formation_mods(self):
         return Formation.MODIFIERS.get(self.formation, (1.0, 1.0, 1.0, 1.0, False))
+
+    @property
+    def vision_radius(self):
+        """Vision range for fog of war."""
+        base = VISION_CAVALRY if self.is_cavalry else VISION_INFANTRY
+        if self.is_ranged:
+            base = max(base, self.unit_stats.range_distance)
+        # Hills grant bonus vision
+        if self.terrain_mods.get("terrain_type") == "hill":
+            base *= VISION_HILL_BONUS
+        return base
 
     @property
     def effective_speed(self):
@@ -511,6 +526,9 @@ class Squad:
         for sq in all_squads:
             if sq.team == self.team or sq.is_destroyed:
                 continue
+            # Player squads can only auto-target visible enemies
+            if self.team == 0 and not sq.visible:
+                continue
             d = distance(self.x, self.y, sq.x, sq.y)
             if d < best_dist:
                 best_dist = d
@@ -551,7 +569,9 @@ class Squad:
         return (min_x - padding, min_y - padding,
                 max_x - min_x + padding * 2, max_y - min_y + padding * 2)
 
-    def draw(self, surface, camera):
+    def draw(self, surface, camera, fog_hidden=False):
+        if fog_hidden:
+            return
         color = TEAM_COLORS[self.team]
         light_color = TEAM_COLORS_LIGHT[self.team]
 
