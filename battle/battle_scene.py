@@ -70,6 +70,10 @@ class BattleScene:
         self._hovered_squad = None
         self._mouse_world_pos = (0, 0)
 
+        # UI button state
+        self._ui_buttons = {}
+        self._unit_card_rects = []
+
         # Weather
         self.weather = random.choice(WEATHER_TYPES)
         self.wind_direction = random.uniform(-1, 1)  # -1 = left, +1 = right
@@ -483,6 +487,9 @@ class BattleScene:
             get_audio().play("ability")
 
     def _handle_left_click(self, pos):
+        # Check UI buttons first
+        if hasattr(self, '_ui_buttons') and self._handle_ui_click(pos):
+            return
         wx, wy = self.camera.screen_to_world(*pos)
         shift = pygame.key.get_mods() & pygame.KMOD_SHIFT
 
@@ -1200,11 +1207,127 @@ class BattleScene:
 
         surface.blit(fog, (0, 0))
 
+    # ─── UI Button System ───
+    def _make_button(self, x, y, w, h, text, active=False, enabled=True):
+        """Return a button dict for the UI system."""
+        return {"x": x, "y": y, "w": w, "h": h, "text": text,
+                "active": active, "enabled": enabled}
+
+    def _draw_button(self, surface, btn, font):
+        """Draw a single UI button."""
+        x, y, w, h = btn["x"], btn["y"], btn["w"], btn["h"]
+        if btn["active"]:
+            bg_color = (60, 120, 60, 200)
+            text_color = (200, 255, 200)
+            border_color = (100, 200, 100)
+        elif not btn["enabled"]:
+            bg_color = (40, 40, 40, 120)
+            text_color = (80, 80, 80)
+            border_color = (60, 60, 60)
+        else:
+            bg_color = (50, 50, 60, 180)
+            text_color = (200, 200, 210)
+            border_color = (100, 100, 120)
+
+        btn_surf = pygame.Surface((w, h), pygame.SRCALPHA)
+        btn_surf.fill(bg_color)
+        surface.blit(btn_surf, (x, y))
+        pygame.draw.rect(surface, border_color, (x, y, w, h), 1)
+        text_surf = font.render(btn["text"], True, text_color)
+        surface.blit(text_surf, (x + w // 2 - text_surf.get_width() // 2,
+                                  y + h // 2 - text_surf.get_height() // 2))
+        return pygame.Rect(x, y, w, h)
+
+    def _point_in_button(self, pos, btn):
+        return (btn["x"] <= pos[0] <= btn["x"] + btn["w"] and
+                btn["y"] <= pos[1] <= btn["y"] + btn["h"])
+
+    def _handle_ui_click(self, pos):
+        """Handle clicks on bottom panel UI buttons. Returns True if handled."""
+        if not self._ui_buttons:
+            return False
+        for btn_id, btn in self._ui_buttons.items():
+            if not btn["enabled"]:
+                continue
+            if self._point_in_button(pos, btn):
+                self._on_ui_button_click(btn_id)
+                return True
+        # Check unit card clicks
+        for i, card_rect in enumerate(self._unit_card_rects):
+            if card_rect.collidepoint(pos):
+                self._on_unit_card_click(i)
+                return True
+        return False
+
+    def _on_ui_button_click(self, btn_id):
+        """Handle a UI button being clicked."""
+        if btn_id == "pause":
+            self.paused = not self.paused
+        elif btn_id == "speed1":
+            self.speed_multiplier = 1
+        elif btn_id == "speed2":
+            self.speed_multiplier = 2
+        elif btn_id == "speed3":
+            self.speed_multiplier = 4
+        elif btn_id == "walk":
+            for sq in self.selected_squads:
+                sq.movement_mode = MOVE_MODE_WALK
+        elif btn_id == "march":
+            for sq in self.selected_squads:
+                sq.movement_mode = MOVE_MODE_MARCH
+        elif btn_id == "run":
+            for sq in self.selected_squads:
+                sq.movement_mode = MOVE_MODE_RUN
+        elif btn_id == "defensive":
+            for sq in self.selected_squads:
+                sq.defensive_stance = not sq.defensive_stance
+                if sq.defensive_stance:
+                    sq.defensive_anchor_x = sq.x
+                    sq.defensive_anchor_y = sq.y
+        elif btn_id == "skirmish":
+            for sq in self.selected_squads:
+                if sq.is_ranged:
+                    sq.skirmish_stance = not sq.skirmish_stance
+        elif btn_id == "fire":
+            for sq in self.selected_squads:
+                if sq.is_ranged:
+                    sq.fire_at_will = not sq.fire_at_will
+        elif btn_id.startswith("form_"):
+            form_map = {"form_line": Formation.LINE, "form_column": Formation.COLUMN,
+                        "form_square": Formation.SQUARE, "form_loose": Formation.LOOSE,
+                        "form_wedge": Formation.WEDGE}
+            if btn_id in form_map:
+                for sq in self.selected_squads:
+                    sq.set_formation(form_map[btn_id])
+        elif btn_id.startswith("ability_"):
+            idx = int(btn_id.split("_")[1])
+            if self.selected_general:
+                friendly = self.player_squads if self.selected_general.team == 0 else self.enemy_squads
+                enemy = self.enemy_squads if self.selected_general.team == 0 else self.player_squads
+                if self.selected_general.activate_ability(idx, friendly, enemy):
+                    get_audio().play("ability")
+
+    def _on_unit_card_click(self, index):
+        """Select a player squad by clicking its unit card."""
+        alive_squads = [sq for sq in self.player_squads if not sq.is_destroyed]
+        if index < len(alive_squads):
+            for sq in self.player_squads:
+                sq.selected = False
+            for g in self.player_generals:
+                g.selected = False
+            self.selected_general = None
+            sq = alive_squads[index]
+            sq.selected = True
+            self.selected_squads = [sq]
+
     def _draw_hud(self, surface):
         font = pygame.font.SysFont(None, 20)
         small_font = pygame.font.SysFont(None, 16)
+        btn_font = pygame.font.SysFont(None, 15)
+        self._ui_buttons = {}
+        self._unit_card_rects = []
 
-        # Top bar
+        # ── Top bar ──
         bar_surf = pygame.Surface((SCREEN_WIDTH, 36), pygame.SRCALPHA)
         bar_surf.fill((0, 0, 0, 160))
         surface.blit(bar_surf, (0, 0))
@@ -1214,8 +1337,22 @@ class BattleScene:
         timer_text = font.render(f"Battle: {minutes:02d}:{seconds:02d}", True, WHITE)
         surface.blit(timer_text, (SCREEN_WIDTH // 2 - timer_text.get_width() // 2, 8))
 
-        speed_text = font.render(f"Speed: {self.speed_multiplier}x", True, YELLOW)
-        surface.blit(speed_text, (SCREEN_WIDTH // 2 + 100, 8))
+        # Speed buttons in top bar
+        for i, (label, spd, btn_id) in enumerate([("1x", 1, "speed1"),
+                                                    ("2x", 2, "speed2"),
+                                                    ("4x", 4, "speed3")]):
+            bx = SCREEN_WIDTH // 2 + 80 + i * 36
+            btn = self._make_button(bx, 4, 32, 26, label,
+                                     active=(self.speed_multiplier == spd))
+            self._ui_buttons[btn_id] = btn
+            self._draw_button(surface, btn, btn_font)
+
+        # Pause button
+        pause_btn = self._make_button(SCREEN_WIDTH // 2 + 80 + 3 * 36 + 8, 4, 55, 26,
+                                       "PAUSED" if self.paused else "Pause",
+                                       active=self.paused)
+        self._ui_buttons["pause"] = pause_btn
+        self._draw_button(surface, pause_btn, btn_font)
 
         if self.weather != "clear":
             weather_colors = {
@@ -1226,10 +1363,6 @@ class BattleScene:
             w_text = font.render(f"Weather: {self.weather.title()}", True, wc)
             surface.blit(w_text, (SCREEN_WIDTH // 2 - 250, 8))
 
-        if self.paused:
-            pause_text = font.render("PAUSED", True, YELLOW)
-            surface.blit(pause_text, (SCREEN_WIDTH // 2 - 150, 8))
-
         p_alive = sum(sq.alive_count for sq in self.player_squads)
         e_alive = sum(sq.alive_count for sq in self.enemy_squads)
         p_text = font.render(f"Your Army: {p_alive}", True, TEAM_COLORS_LIGHT[0])
@@ -1237,85 +1370,183 @@ class BattleScene:
         surface.blit(p_text, (10, 8))
         surface.blit(e_text, (SCREEN_WIDTH - e_text.get_width() - 10, 8))
 
-        if self.selected_squads:
-            self._draw_selection_panel(surface, font, small_font)
-        elif self.selected_general:
-            self._draw_general_panel(surface, font, small_font)
+        # ── Bottom panel ──
+        panel_h = 110
+        panel_y = SCREEN_HEIGHT - panel_h
+        panel_surf = pygame.Surface((SCREEN_WIDTH, panel_h), pygame.SRCALPHA)
+        panel_surf.fill((0, 0, 0, 180))
+        surface.blit(panel_surf, (0, panel_y))
+        pygame.draw.line(surface, (80, 80, 100), (0, panel_y), (SCREEN_WIDTH, panel_y), 1)
 
-        help_y = SCREEN_HEIGHT - 24
-        help_text = small_font.render(
-            "[SPACE] Pause  [1/2/3] Speed  [F] Fire  [V] Fog  [Q/W/E/R] Abilities  "
-            "[Ctrl+1-5] Formation  [Z/X/C] Walk/March/Run  [D] Defensive  [S] Skirmish",
-            True, (180, 180, 180))
-        surface.blit(help_text, (10, help_y))
+        # Unit cards along bottom
+        self._draw_unit_cards(surface, panel_y, small_font, btn_font)
+
+        # Selected unit info + buttons
+        if self.selected_squads:
+            self._draw_selection_panel(surface, font, small_font, btn_font, panel_y)
+        elif self.selected_general:
+            self._draw_general_panel(surface, font, small_font, btn_font, panel_y)
 
         if self.result != BattleResult.ONGOING:
             self._draw_result_banner(surface)
 
-    def _draw_selection_panel(self, surface, font, small_font):
-        panel_h = 80 + len(self.selected_squads) * 35
-        panel_surf = pygame.Surface((340, panel_h), pygame.SRCALPHA)
-        panel_surf.fill((0, 0, 0, 180))
-        surface.blit(panel_surf, (0, SCREEN_HEIGHT - panel_h - 30))
+    def _draw_unit_cards(self, surface, panel_y, small_font, btn_font):
+        """Draw clickable unit cards along the bottom of the screen."""
+        alive_squads = [sq for sq in self.player_squads if not sq.is_destroyed]
+        card_w = 58
+        card_h = 40
+        card_y = panel_y + 65
+        start_x = 10
+        self._unit_card_rects = []
 
-        y = SCREEN_HEIGHT - panel_h - 25
-        header = font.render("Selected Units:", True, WHITE)
-        surface.blit(header, (10, y))
-        y += 22
-        for sq in self.selected_squads:
-            state_str = sq.state.upper()
-            info = (f"{sq.unit_stats.name}: {sq.alive_count}/{sq.initial_count} "
-                    f"[{state_str}] Morale:{int(sq.morale)}%")
+        for i, sq in enumerate(alive_squads):
+            cx = start_x + i * (card_w + 4)
+            if cx + card_w > SCREEN_WIDTH - 10:
+                break
+
+            is_selected = sq in self.selected_squads
+            bg_color = (60, 100, 60, 200) if is_selected else (40, 40, 50, 180)
+            border_color = (100, 200, 100) if is_selected else (70, 70, 90)
+
+            card_surf = pygame.Surface((card_w, card_h), pygame.SRCALPHA)
+            card_surf.fill(bg_color)
+            surface.blit(card_surf, (cx, card_y))
+            pygame.draw.rect(surface, border_color, (cx, card_y, card_w, card_h), 1)
+
+            # Unit type abbreviation
+            abbrev = sq.unit_stats.name[:5]
+            text = btn_font.render(abbrev, True, TEAM_COLORS_LIGHT[sq.team])
+            surface.blit(text, (cx + 2, card_y + 2))
+
+            # Count
+            count_text = btn_font.render(f"{sq.alive_count}", True, WHITE)
+            surface.blit(count_text, (cx + 2, card_y + 15))
+
+            # Mini morale bar
+            bar_x = cx + 2
+            bar_y_pos = card_y + card_h - 8
+            bar_w = card_w - 4
+            pygame.draw.rect(surface, (40, 40, 40), (bar_x, bar_y_pos, bar_w, 4))
+            morale_w = int(bar_w * sq.morale / 100)
+            morale_color = (50, 200, 50) if sq.morale > 50 else (
+                (220, 200, 50) if sq.morale > 25 else (200, 50, 50))
+            pygame.draw.rect(surface, morale_color, (bar_x, bar_y_pos, morale_w, 4))
+
+            self._unit_card_rects.append(pygame.Rect(cx, card_y, card_w, card_h))
+
+    def _draw_selection_panel(self, surface, font, small_font, btn_font, panel_y):
+        """Draw selected unit info with clickable stance/mode buttons."""
+        # Unit info area (left side of bottom panel)
+        y = panel_y + 4
+        sq = self.selected_squads[0] if len(self.selected_squads) == 1 else None
+
+        if sq:
+            # Single unit selected — detailed view
+            info = (f"{sq.unit_stats.name}: {sq.alive_count}/{sq.initial_count}"
+                    f"  Morale:{int(sq.morale)}%  {sq.exhaustion_display}")
             text = small_font.render(info, True, TEAM_COLORS_LIGHT[sq.team])
-            surface.blit(text, (15, y))
+            surface.blit(text, (10, y))
             y += 16
-            # Second line: exhaustion + weapon stats
             ws = sq.unit_stats.weapon_strength
             ap = sq.unit_stats.armor_penetration
-            extra = f"  {sq.exhaustion_display} | WS:{ws} AP:{ap}%"
+            extra = f"WS:{ws} AP:{ap}%"
             if sq.unit_stats.ranged_strength > 0:
-                extra += f" RS:{sq.unit_stats.ranged_strength} RAP:{sq.unit_stats.ranged_armor_penetration}%"
+                extra += f"  RS:{sq.unit_stats.ranged_strength} RAP:{sq.unit_stats.ranged_armor_penetration}%"
             if sq.is_braced:
-                extra += " [BRACED]"
+                extra += "  BRACED"
             text2 = small_font.render(extra, True, (160, 160, 160))
-            surface.blit(text2, (15, y))
-            y += 19
+            surface.blit(text2, (10, y))
+        else:
+            # Multiple units — summary
+            count = len(self.selected_squads)
+            total = sum(sq.alive_count for sq in self.selected_squads)
+            text = font.render(f"{count} units selected ({total} soldiers)", True, WHITE)
+            surface.blit(text, (10, y))
 
-    def _draw_general_panel(self, surface, font, small_font):
+        # ── Clickable buttons (right side of bottom panel) ──
+        btn_y = panel_y + 4
+        btn_x = 350
+
+        # Movement mode buttons
+        mode_label = small_font.render("Move:", True, (150, 150, 160))
+        surface.blit(mode_label, (btn_x, btn_y + 2))
+        btn_x += 40
+        active_mode = self.selected_squads[0].movement_mode if self.selected_squads else MOVE_MODE_MARCH
+        for label, mode, bid in [("Walk", MOVE_MODE_WALK, "walk"),
+                                  ("March", MOVE_MODE_MARCH, "march"),
+                                  ("Run", MOVE_MODE_RUN, "run")]:
+            btn = self._make_button(btn_x, btn_y, 44, 20, label,
+                                     active=(active_mode == mode))
+            self._ui_buttons[bid] = btn
+            self._draw_button(surface, btn, btn_font)
+            btn_x += 48
+
+        # Stance buttons
+        btn_x += 8
+        stance_label = small_font.render("Stance:", True, (150, 150, 160))
+        surface.blit(stance_label, (btn_x, btn_y + 2))
+        btn_x += 50
+        any_def = any(sq.defensive_stance for sq in self.selected_squads)
+        btn = self._make_button(btn_x, btn_y, 60, 20, "Defensive", active=any_def)
+        self._ui_buttons["defensive"] = btn
+        self._draw_button(surface, btn, btn_font)
+        btn_x += 64
+
+        any_skirm = any(sq.skirmish_stance for sq in self.selected_squads)
+        has_ranged = any(sq.is_ranged for sq in self.selected_squads)
+        btn = self._make_button(btn_x, btn_y, 58, 20, "Skirmish",
+                                 active=any_skirm, enabled=has_ranged)
+        self._ui_buttons["skirmish"] = btn
+        self._draw_button(surface, btn, btn_font)
+        btn_x += 62
+
+        any_fire = any(sq.fire_at_will for sq in self.selected_squads if sq.is_ranged)
+        btn = self._make_button(btn_x, btn_y, 48, 20, "Fire",
+                                 active=any_fire, enabled=has_ranged)
+        self._ui_buttons["fire"] = btn
+        self._draw_button(surface, btn, btn_font)
+
+        # Formation buttons (second row)
+        btn_y2 = panel_y + 30
+        btn_x2 = 350
+        form_label = small_font.render("Formation:", True, (150, 150, 160))
+        surface.blit(form_label, (btn_x2, btn_y2 + 2))
+        btn_x2 += 72
+        active_form = self.selected_squads[0].formation if self.selected_squads else Formation.LINE
+        for label, form, bid in [("Line", Formation.LINE, "form_line"),
+                                  ("Column", Formation.COLUMN, "form_column"),
+                                  ("Square", Formation.SQUARE, "form_square"),
+                                  ("Loose", Formation.LOOSE, "form_loose"),
+                                  ("Wedge", Formation.WEDGE, "form_wedge")]:
+            btn = self._make_button(btn_x2, btn_y2, 48, 20, label,
+                                     active=(active_form == form))
+            self._ui_buttons[bid] = btn
+            self._draw_button(surface, btn, btn_font)
+            btn_x2 += 52
+
+    def _draw_general_panel(self, surface, font, small_font, btn_font, panel_y):
         g = self.selected_general
-        num_abilities = len(g.available_abilities)
-        panel_h = 120 + num_abilities * 22
-        panel_surf = pygame.Surface((340, panel_h), pygame.SRCALPHA)
-        panel_surf.fill((0, 0, 0, 180))
-        surface.blit(panel_surf, (0, SCREEN_HEIGHT - panel_h - 30))
 
-        y = SCREEN_HEIGHT - panel_h - 25
+        y = panel_y + 4
         header = font.render(f"{g.name} ({g.general_type}) Lv{g.level}", True, GOLD)
         surface.blit(header, (10, y))
-        y += 22
-        hp = small_font.render(f"HP: {int(g.health)}/{int(g.max_health)}  XP to next: {g.xp_to_next}", True, WHITE)
-        surface.blit(hp, (15, y))
-        y += 18
-        stats = small_font.render(
-            f"ATK:{g.melee_attack} DEF:{g.melee_defense} WS:{g.unit_stats.weapon_strength} "
-            f"AP:{g.unit_stats.armor_penetration}%",
+        y += 20
+        hp = small_font.render(
+            f"HP: {int(g.health)}/{int(g.max_health)}  ATK:{g.melee_attack} DEF:{g.melee_defense}"
+            f"  Kills:{g.kills} Duels:{g.duels_won}",
             True, WHITE)
-        surface.blit(stats, (15, y))
-        y += 18
-        kills_text = small_font.render(
-            f"Kills:{g.kills} Duels Won:{g.duels_won}", True, WHITE)
-        surface.blit(kills_text, (15, y))
-        y += 18
+        surface.blit(hp, (10, y))
+        y += 16
 
         if g.duel_state == DuelState.ACTIVE:
             duel_text = small_font.render(
                 f"DUELING {g.duel_opponent.name}! Score: {g.duel_score}-{g.duel_opponent.duel_score}",
                 True, GOLD)
-            surface.blit(duel_text, (15, y))
-            y += 18
+            surface.blit(duel_text, (10, y))
 
-        # Abilities
-        y += 4
+        # Ability buttons (right side)
+        btn_x = 400
+        btn_y = panel_y + 4
         keys = ["Q", "W", "E", "R"]
         for i, ability in enumerate(g.available_abilities):
             if i >= 4:
@@ -1323,22 +1554,22 @@ class BattleScene:
             cd_text = ""
             if not ability.ready:
                 cd_secs = ability.cooldown // 60
-                cd_text = f" ({cd_secs}s)"
-            color = WHITE if ability.ready else (100, 100, 100)
-            text = small_font.render(
-                f"[{keys[i]}] {ability.name}{cd_text} - {ability.description[:40]}",
-                True, color)
-            surface.blit(text, (15, y))
-            y += 20
+                cd_text = f" {cd_secs}s"
+            label = f"[{keys[i]}] {ability.name}{cd_text}"
+            btn = self._make_button(btn_x, btn_y + i * 24, 200, 20, label,
+                                     active=False, enabled=ability.ready)
+            self._ui_buttons[f"ability_{i}"] = btn
+            self._draw_button(surface, btn, btn_font)
 
-        # Show locked abilities
-        for i, ability in enumerate(g.abilities):
+        # Locked abilities
+        lock_y = btn_y + len(g.available_abilities) * 24
+        for ability in g.abilities:
             if ability.level_required > g.level:
                 text = small_font.render(
-                    f"  Lv{ability.level_required}: {ability.name} (Locked)",
+                    f"Lv{ability.level_required}: {ability.name} (Locked)",
                     True, (80, 80, 80))
-                surface.blit(text, (15, y))
-                y += 18
+                surface.blit(text, (btn_x, lock_y))
+                lock_y += 16
 
     def _draw_result_banner(self, surface):
         overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
