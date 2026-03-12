@@ -256,7 +256,9 @@ class CampaignScene:
 
     def _save_game(self):
         from core.save_system import save_campaign
+        from core.audio import get_audio
         save_campaign(self)
+        get_audio().play("save")
         self._save_notification_timer = 120  # show "Saved!" for 2 seconds
 
     def update(self):

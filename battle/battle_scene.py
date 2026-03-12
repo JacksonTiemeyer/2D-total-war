@@ -16,6 +16,7 @@ from core.camera import Camera
 from core.utils import distance, point_in_rect
 from battle.squad import Squad, SquadState, Formation
 from battle.general import General, DuelState
+from core.audio import get_audio
 
 
 class BattleResult:
@@ -266,7 +267,8 @@ class BattleScene:
             return
         friendly = self.player_squads if g.team == 0 else self.enemy_squads
         enemy = self.enemy_squads if g.team == 0 else self.player_squads
-        g.activate_ability(index, friendly, enemy)
+        if g.activate_ability(index, friendly, enemy):
+            get_audio().play("ability")
 
     def _handle_left_click(self, pos):
         wx, wy = self.camera.screen_to_world(*pos)
@@ -379,6 +381,11 @@ class BattleScene:
         # Compute fog of war visibility
         self._compute_visibility()
 
+        # Snapshot states for sound triggers
+        prev_states = {id(sq): sq.state for sq in self.all_squads}
+        prev_routed = {id(sq) for sq in self.all_squads
+                       if sq.state == SquadState.ROUTED}
+
         for sq in self.all_squads:
             sq.terrain_mods = self.get_terrain_modifiers(sq)
             sq.update(self.all_squads)
@@ -390,10 +397,23 @@ class BattleScene:
 
         self._enemy_ai()
 
+        # Sound triggers: charge impact and rout
+        audio = get_audio()
+        for sq in self.all_squads:
+            old_state = prev_states.get(id(sq))
+            # Charge -> Fighting = impact sound
+            if old_state == SquadState.CHARGING and sq.state == SquadState.FIGHTING:
+                audio.play("charge")
+            # Newly routed
+            if sq.state == SquadState.ROUTED and id(sq) not in prev_routed:
+                audio.play("rout")
+            # Ranged firing (occasional)
+            if sq.state == SquadState.FIRING and self.battle_timer % 60 == 0:
+                audio.play("arrow_volley")
+
         # Track kills for XP
         for g in self.all_generals:
             if g.alive and g.kills > 0:
-                # XP per kill
                 new_kills = g.kills
                 if not hasattr(g, '_prev_kills'):
                     g._prev_kills = 0
@@ -414,6 +434,7 @@ class BattleScene:
 
         self.selected_squads = [s for s in self.selected_squads if not s.is_destroyed]
 
+        prev_result = self.result
         player_alive = any(not sq.is_destroyed for sq in self.player_squads)
         enemy_alive = any(not sq.is_destroyed for sq in self.enemy_squads)
         if not enemy_alive and player_alive:
@@ -422,6 +443,13 @@ class BattleScene:
             self.result = BattleResult.PLAYER_LOSS
         elif not player_alive and not enemy_alive:
             self.result = BattleResult.PLAYER_LOSS
+
+        # Victory/defeat sound
+        if prev_result == BattleResult.ONGOING and self.result != BattleResult.ONGOING:
+            if self.result == BattleResult.PLAYER_WIN:
+                audio.play("victory")
+            else:
+                audio.play("defeat")
 
     def _enemy_ai(self):
         """Role-based AI: melee advances, cavalry flanks, ranged stays back."""
