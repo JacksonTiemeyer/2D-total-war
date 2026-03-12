@@ -16,7 +16,7 @@ from core.settings import (
     WEATHER_WIND_ACCURACY,
 )
 from core.camera import Camera
-from core.utils import distance, point_in_rect
+from core.utils import distance, point_in_rect, angle_between
 from battle.squad import Squad, SquadState, Formation
 from battle.general import General, DuelState
 from core.audio import get_audio
@@ -51,6 +51,17 @@ class BattleScene:
         self.battle_timer = 0
         self.speed_multiplier = 1
         self.fog_enabled = True  # fog of war toggle
+
+        # Right-click drag state for facing control
+        self._right_dragging = False
+        self._right_click_pos = None      # screen position of initial right click
+        self._right_click_world = None    # world position of initial right click
+        self._right_drag_pos = None       # current screen position during drag
+
+        # Deployment phase
+        self.deployment_phase = True
+        self.deploy_zone = (50, 50, 500, BATTLE_MAP_HEIGHT - 100)  # left side zone
+        self._deploy_dragging = None  # squad being dragged during deployment
 
         # Weather
         self.weather = random.choice(WEATHER_TYPES)
@@ -280,6 +291,11 @@ class BattleScene:
     def handle_event(self, event):
         self.camera.handle_event(event)
 
+        # Deployment phase handling
+        if self.deployment_phase:
+            self._handle_deployment_event(event)
+            return
+
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_SPACE:
                 self.paused = not self.paused
@@ -314,14 +330,36 @@ class BattleScene:
             if event.button == 1:
                 self._handle_left_click(event.pos)
             elif event.button == 3:
-                self._handle_right_click(event.pos)
+                # Start tracking right-click drag for facing control
+                self._right_click_pos = event.pos
+                self._right_click_world = self.camera.screen_to_world(*event.pos)
+                self._right_dragging = False
+                self._right_drag_pos = event.pos
 
         if event.type == pygame.MOUSEBUTTONUP:
             if event.button == 1 and self.selecting:
                 self._finish_box_select(event.pos)
+            elif event.button == 3:
+                if self._right_dragging and self.selected_squads:
+                    # Drag release: set facing direction
+                    self._apply_facing_from_drag(event.pos)
+                elif self._right_click_pos:
+                    # Short click: normal right-click behavior
+                    self._handle_right_click(self._right_click_pos)
+                self._right_click_pos = None
+                self._right_dragging = False
+                self._right_drag_pos = None
 
-        if event.type == pygame.MOUSEMOTION and self.selecting:
-            self.select_end = event.pos
+        if event.type == pygame.MOUSEMOTION:
+            if self.selecting:
+                self.select_end = event.pos
+            if self._right_click_pos:
+                dx = event.pos[0] - self._right_click_pos[0]
+                dy = event.pos[1] - self._right_click_pos[1]
+                drag_dist = (dx * dx + dy * dy) ** 0.5
+                if drag_dist > 15:
+                    self._right_dragging = True
+                self._right_drag_pos = event.pos
 
     def _handle_ability_key(self, key):
         """Activate general ability via Q/W/E/R hotkeys."""
@@ -397,6 +435,131 @@ class BattleScene:
                 g.selected = True
                 self.selected_general = g
 
+    def _handle_deployment_event(self, event):
+        """Handle input during deployment phase."""
+        self.camera.handle_event(event)
+
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_RETURN or event.key == pygame.K_SPACE:
+                # Ready up - start the battle
+                self.deployment_phase = False
+                self._deploy_dragging = None
+                get_audio().play("click")
+                return
+
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            wx, wy = self.camera.screen_to_world(*event.pos)
+            # Check if clicking on a player squad to drag it
+            for sq in self.player_squads:
+                if sq.is_destroyed:
+                    continue
+                bbox = sq.get_bounding_box()
+                if point_in_rect(wx, wy, *bbox):
+                    self._deploy_dragging = sq
+                    sq.selected = True
+                    self.selected_squads = [sq]
+                    return
+
+        if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+            self._deploy_dragging = None
+
+        if event.type == pygame.MOUSEMOTION and self._deploy_dragging:
+            wx, wy = self.camera.screen_to_world(*event.pos)
+            zx, zy, zw, zh = self.deploy_zone
+            # Clamp to deployment zone
+            wx = max(zx + 30, min(zx + zw - 30, wx))
+            wy = max(zy + 30, min(zy + zh - 30, wy))
+            # Move the squad
+            sq = self._deploy_dragging
+            dx = wx - sq.x
+            dy = wy - sq.y
+            sq.x = wx
+            sq.y = wy
+            sq.target_x = wx
+            sq.target_y = wy
+            for s in sq.alive_soldiers:
+                s.x += dx
+                s.y += dy
+
+        # Right-click during deployment: set facing
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 3:
+            self._right_click_pos = event.pos
+            self._right_click_world = self.camera.screen_to_world(*event.pos)
+            self._right_dragging = False
+            self._right_drag_pos = event.pos
+
+        if event.type == pygame.MOUSEBUTTONUP and event.button == 3:
+            if self._right_dragging and self.selected_squads:
+                # Set facing only (no move during deployment)
+                wx2, wy2 = self.camera.screen_to_world(*event.pos)
+                wx1, wy1 = self._right_click_world
+                facing = angle_between(wx1, wy1, wx2, wy2)
+                for sq in self.selected_squads:
+                    sq.facing_angle = facing
+            self._right_click_pos = None
+            self._right_dragging = False
+
+        if event.type == pygame.MOUSEMOTION and self._right_click_pos:
+            dx = event.pos[0] - self._right_click_pos[0]
+            dy = event.pos[1] - self._right_click_pos[1]
+            if (dx * dx + dy * dy) ** 0.5 > 15:
+                self._right_dragging = True
+            self._right_drag_pos = event.pos
+
+    def _draw_deployment(self, surface):
+        """Draw deployment zone and instructions."""
+        zx, zy, zw, zh = self.deploy_zone
+        sx, sy = self.camera.world_to_screen(zx, zy)
+        sw = self.camera.scale(zw)
+        sh = self.camera.scale(zh)
+
+        # Semi-transparent deployment zone
+        zone_surf = pygame.Surface((int(sw), int(sh)), pygame.SRCALPHA)
+        zone_surf.fill((100, 150, 255, 30))
+        surface.blit(zone_surf, (int(sx), int(sy)))
+        pygame.draw.rect(surface, (100, 150, 255, 180),
+                         (int(sx), int(sy), int(sw), int(sh)), 2)
+
+        # "DEPLOYMENT ZONE" label
+        font = pygame.font.SysFont(None, 24)
+        label = font.render("DEPLOYMENT ZONE", True, (150, 200, 255))
+        surface.blit(label, (int(sx) + int(sw) // 2 - label.get_width() // 2,
+                             int(sy) + 5))
+
+        # Instructions at top
+        big_font = pygame.font.SysFont(None, 36)
+        title = big_font.render("DEPLOYMENT PHASE", True, GOLD)
+        surface.blit(title, (SCREEN_WIDTH // 2 - title.get_width() // 2, 50))
+
+        inst_font = pygame.font.SysFont(None, 22)
+        instructions = [
+            "Drag units to position them within the blue zone",
+            "Right-click + drag to set facing direction",
+            "Press ENTER or SPACE to start the battle",
+        ]
+        for i, line in enumerate(instructions):
+            text = inst_font.render(line, True, (200, 220, 255))
+            surface.blit(text, (SCREEN_WIDTH // 2 - text.get_width() // 2, 90 + i * 24))
+
+        # Ready button hint
+        ready_text = big_font.render("[ PRESS ENTER TO BEGIN ]", True, (200, 255, 200))
+        surface.blit(ready_text,
+                     (SCREEN_WIDTH // 2 - ready_text.get_width() // 2,
+                      SCREEN_HEIGHT - 60))
+
+    def _apply_facing_from_drag(self, release_pos):
+        """Set selected squads' facing based on right-click drag direction."""
+        if not self._right_click_pos:
+            return
+        wx1, wy1 = self._right_click_world
+        wx2, wy2 = self.camera.screen_to_world(*release_pos)
+        facing = angle_between(wx1, wy1, wx2, wy2)
+        for sq in self.selected_squads:
+            sq.facing_angle = facing
+            # Also move to the click position
+            sq.give_move_order(wx1, wy1)
+            sq.facing_angle = facing  # override the angle set by give_move_order
+
     def _handle_right_click(self, pos):
         wx, wy = self.camera.screen_to_world(*pos)
 
@@ -435,7 +598,8 @@ class BattleScene:
             self.selected_general.give_move_order(wx, wy)
 
     def update(self):
-        if self.paused:
+        if self.paused or self.deployment_phase:
+            self.camera.update()
             return
 
         for _ in range(self.speed_multiplier):
@@ -802,10 +966,87 @@ class BattleScene:
                 surface.blit(select_surf, (sx, sy))
                 pygame.draw.rect(surface, (100, 200, 100), (sx, sy, sw, sh), 1)
 
+        # Right-click drag facing indicator
+        if self._right_dragging and self._right_click_pos and self._right_drag_pos:
+            sx1, sy1 = self._right_click_pos
+            sx2, sy2 = self._right_drag_pos
+            # Draw movement destination marker
+            pygame.draw.circle(surface, (200, 200, 255), (int(sx1), int(sy1)), 6, 2)
+            # Draw facing direction arrow
+            dx, dy = sx2 - sx1, sy2 - sy1
+            d = max(1, (dx * dx + dy * dy) ** 0.5)
+            nx, ny = dx / d, dy / d
+            arrow_len = min(d, 60)
+            ax, ay = sx1 + nx * arrow_len, sy1 + ny * arrow_len
+            pygame.draw.line(surface, (200, 200, 255),
+                             (int(sx1), int(sy1)), (int(ax), int(ay)), 3)
+            # Arrowhead
+            for side in [-0.5, 0.5]:
+                head_angle = math.atan2(ny, nx) + side
+                hx = ax - math.cos(head_angle) * 12
+                hy = ay - math.sin(head_angle) * 12
+                pygame.draw.line(surface, (200, 200, 255),
+                                 (int(ax), int(ay)), (int(hx), int(hy)), 3)
+
+        # Targeting indicators
+        self._draw_targeting_lines(surface)
+
         # Weather particles on top
         self._draw_weather(surface)
 
         self._draw_hud(surface)
+
+        # Deployment overlay (on top of everything)
+        if self.deployment_phase:
+            self._draw_deployment(surface)
+
+    def _draw_targeting_lines(self, surface):
+        """Draw lines showing targeting relationships."""
+        target_surf = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+
+        # Player squads -> their targets (green/yellow lines)
+        for sq in self.player_squads:
+            if sq.is_destroyed or not sq.target_squad:
+                continue
+            if sq.target_squad.is_destroyed:
+                continue
+            cx, cy = sq.center
+            tx, ty = sq.target_squad.center
+            sx1, sy1 = self.camera.world_to_screen(cx, cy)
+            sx2, sy2 = self.camera.world_to_screen(tx, ty)
+            if sq.state == SquadState.FIRING:
+                color = (100, 200, 255, 100)  # blue for ranged
+            elif sq.state in (SquadState.CHARGING, SquadState.FIGHTING):
+                color = (100, 255, 100, 120)  # green for melee
+            else:
+                color = (200, 200, 100, 80)  # yellow for moving to attack
+            pygame.draw.line(target_surf, color,
+                             (int(sx1), int(sy1)), (int(sx2), int(sy2)), 2)
+            # Small diamond at target end
+            pygame.draw.circle(target_surf, color, (int(sx2), int(sy2)), 4)
+
+        # Visible enemy squads -> their targets (red lines, only if targeting player)
+        for sq in self.enemy_squads:
+            if sq.is_destroyed or not sq.target_squad:
+                continue
+            if self.fog_enabled and not sq.visible:
+                continue
+            if sq.target_squad.is_destroyed:
+                continue
+            # Only show if targeting a player unit
+            if sq.target_squad.team != 0:
+                continue
+            cx, cy = sq.center
+            tx, ty = sq.target_squad.center
+            sx1, sy1 = self.camera.world_to_screen(cx, cy)
+            sx2, sy2 = self.camera.world_to_screen(tx, ty)
+            color = (255, 80, 80, 90)  # red for enemy targeting
+            pygame.draw.line(target_surf, color,
+                             (int(sx1), int(sy1)), (int(sx2), int(sy2)), 1)
+            # Small x at target end
+            pygame.draw.circle(target_surf, (255, 60, 60, 120), (int(sx2), int(sy2)), 3, 1)
+
+        surface.blit(target_surf, (0, 0))
 
     def _draw_weather(self, surface):
         """Draw weather particle effects."""
@@ -917,7 +1158,7 @@ class BattleScene:
         help_y = SCREEN_HEIGHT - 24
         help_text = small_font.render(
             "[SPACE] Pause  [1/2/3] Speed  [F] Fire  [V] Fog  [Q/W/E/R] Abilities  "
-            "[Ctrl+1-5] Formation  [LMB] Select  [RMB] Order",
+            "[Ctrl+1-5] Formation  [LMB] Select  [RMB] Order  [RMB+Drag] Facing",
             True, (180, 180, 180))
         surface.blit(help_text, (10, help_y))
 

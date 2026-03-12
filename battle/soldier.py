@@ -22,6 +22,10 @@ class Soldier:
         self.formation_x = 0.0  # offset from squad center
         self.formation_y = 0.0
         self.exhaustion = 0.0   # 0-100
+        # Animation state
+        self.hit_flash_timer = 0    # frames remaining for white flash
+        self.death_timer = -1       # -1 = alive, >0 = dying animation frames
+        self.death_alpha = 1.0      # fade out on death
 
     def get_exhaustion_factor(self):
         """Returns 0.0 (fresh) to 1.0 (fully exhausted)."""
@@ -57,9 +61,12 @@ class Soldier:
             damage *= 0.5  # shield block
 
         self.health -= damage
+        self.hit_flash_timer = 6  # flash white for 6 frames
         if self.health <= 0:
             self.health = 0
             self.alive = False
+            self.death_timer = 15  # 15-frame death animation
+            self.death_alpha = 1.0
         return damage
 
     def attack(self, target_soldier, is_charging=False, flank_mult=1.0,
@@ -125,3 +132,8 @@ class Soldier:
     def update(self):
         if self.attack_cooldown > 0:
             self.attack_cooldown -= 1
+        if self.hit_flash_timer > 0:
+            self.hit_flash_timer -= 1
+        if self.death_timer > 0:
+            self.death_timer -= 1
+            self.death_alpha = max(0, self.death_timer / 15.0)

@@ -93,6 +93,11 @@ class Squad:
         # Fog of war visibility (set each frame by battle scene)
         self.visible = True
 
+        # Visual effects (slash lines, projectiles)
+        self.visual_effects = []
+        # Recently dead soldiers for death animation
+        self._dying_soldiers = []
+
         # Terrain modifiers (set each frame by battle scene)
         self.terrain_mods = {
             "speed_mult": 1.0, "ranged_accuracy_mult": 1.0,
@@ -231,6 +236,28 @@ class Squad:
         _, _, speed_mult, _, _ = self.formation_mods
         return base * self.terrain_mods.get("speed_mult", 1.0) * speed_mult
 
+    def _spawn_slash_effect(self, sx, sy, tx, ty):
+        """Add a melee slash visual effect."""
+        self.visual_effects.append({
+            "type": "slash", "sx": sx, "sy": sy, "tx": tx, "ty": ty,
+            "timer": 6, "max_timer": 6,
+        })
+
+    def _spawn_projectile_effect(self, sx, sy, tx, ty):
+        """Add a ranged projectile visual effect."""
+        self.visual_effects.append({
+            "type": "projectile", "sx": sx, "sy": sy, "tx": tx, "ty": ty,
+            "timer": 12, "max_timer": 12,
+        })
+
+    def _update_effects(self):
+        """Tick down visual effects and remove expired ones."""
+        for e in self.visual_effects:
+            e["timer"] -= 1
+        self.visual_effects = [e for e in self.visual_effects if e["timer"] > 0]
+        # Update dying soldiers
+        self._dying_soldiers = [s for s in self._dying_soldiers if s.death_timer > 0]
+
     def set_formation(self, formation):
         """Change formation and reposition soldiers."""
         self.formation = formation
@@ -353,6 +380,9 @@ class Squad:
             self._do_ranged(all_squads)
         elif self.state == SquadState.FIGHTING:
             self._do_melee()
+
+        # Update visual effects
+        self._update_effects()
 
         # Update squad position to center of living soldiers
         cx, cy = self.center
@@ -490,9 +520,12 @@ class Squad:
                     dmg = s.attack(best, is_charging=is_charge,
                                    flank_mult=vet_flank,
                                    defense_terrain_mult=vet_def)
-                    if dmg > 0 and not best.alive:
-                        self.kills += 1
-                        self.target_squad.on_casualty()
+                    if dmg > 0:
+                        self._spawn_slash_effect(s.x, s.y, best.x, best.y)
+                        if not best.alive:
+                            self.kills += 1
+                            self.target_squad._dying_soldiers.append(best)
+                            self.target_squad.on_casualty()
                 else:
                     # Move toward enemy
                     nx, ny = normalize(best.x - s.x, best.y - s.y)
@@ -526,10 +559,13 @@ class Squad:
             targets = self.target_squad.alive_soldiers
             if targets:
                 target = random.choice(targets)
+                # Spawn projectile regardless of hit
+                self._spawn_projectile_effect(s.x, s.y, target.x, target.y)
                 dmg = s.ranged_attack(target, accuracy_mult=ranged_acc_mult,
                                        damage_mult=ranged_dmg_mult)
                 if dmg > 0 and not target.alive:
                     self.kills += 1
+                    self.target_squad._dying_soldiers.append(target)
                     self.target_squad.on_casualty()
 
     def _auto_acquire_ranged_target(self, all_squads):
@@ -587,12 +623,61 @@ class Squad:
         color = TEAM_COLORS[self.team]
         light_color = TEAM_COLORS_LIGHT[self.team]
 
+        # Draw dying soldiers (fade out)
+        for s in self._dying_soldiers:
+            sx, sy = camera.world_to_screen(s.x, s.y)
+            r = max(1, int(camera.scale(SOLDIER_RADIUS) * s.death_alpha))
+            alpha = int(255 * s.death_alpha)
+            if r > 0 and alpha > 0:
+                c = tuple(int(ch * 0.3) for ch in color)
+                death_surf = pygame.Surface((r * 2, r * 2), pygame.SRCALPHA)
+                pygame.draw.circle(death_surf, (*c, alpha), (r, r), r)
+                surface.blit(death_surf, (sx - r, sy - r))
+
         for s in self.alive_soldiers:
             sx, sy = camera.world_to_screen(s.x, s.y)
             r = camera.scale(SOLDIER_RADIUS)
             hp_ratio = s.health / s.max_health
-            c = tuple(int(ch * (0.4 + 0.6 * hp_ratio)) for ch in color)
+            if s.hit_flash_timer > 0:
+                # White flash when hit
+                c = (255, 255, 255)
+            else:
+                c = tuple(int(ch * (0.4 + 0.6 * hp_ratio)) for ch in color)
             pygame.draw.circle(surface, c, (sx, sy), r)
+
+        # Draw visual effects (slashes and projectiles)
+        for e in self.visual_effects:
+            progress = 1.0 - e["timer"] / e["max_timer"]
+            if e["type"] == "slash":
+                # Short slash line from attacker toward target
+                sx, sy = camera.world_to_screen(e["sx"], e["sy"])
+                tx, ty = camera.world_to_screen(e["tx"], e["ty"])
+                dx, dy = tx - sx, ty - sy
+                d = max(1, (dx * dx + dy * dy) ** 0.5)
+                nx, ny = dx / d, dy / d
+                slash_len = camera.scale(12)
+                ex = int(sx + nx * slash_len * progress)
+                ey = int(sy + ny * slash_len * progress)
+                alpha = int(255 * (1 - progress))
+                slash_color = (255, 255, 200, alpha)
+                slash_surf = pygame.Surface((abs(ex - int(sx)) + 6, abs(ey - int(sy)) + 6), pygame.SRCALPHA)
+                # Draw on main surface directly with fading white
+                fade = max(0, 255 - int(255 * progress))
+                pygame.draw.line(surface, (255, 255, fade),
+                                 (int(sx), int(sy)), (ex, ey), max(1, camera.scale(2)))
+            elif e["type"] == "projectile":
+                # Dot moving from source to target
+                sx, sy = camera.world_to_screen(e["sx"], e["sy"])
+                tx, ty = camera.world_to_screen(e["tx"], e["ty"])
+                cx = int(sx + (tx - sx) * progress)
+                cy = int(sy + (ty - sy) * progress)
+                pr = max(1, camera.scale(2))
+                pygame.draw.circle(surface, (200, 180, 100), (cx, cy), pr)
+                # Trail
+                trail_x = int(sx + (tx - sx) * max(0, progress - 0.15))
+                trail_y = int(sy + (ty - sy) * max(0, progress - 0.15))
+                pygame.draw.line(surface, (180, 160, 80),
+                                 (trail_x, trail_y), (cx, cy), 1)
 
         # Braced indicator - spear icon (small lines pointing outward)
         if self.is_braced:
@@ -669,6 +754,23 @@ class Squad:
                 label += f" [{terrain_type.upper()}]"
             text = font.render(label, True, light_color)
             surface.blit(text, (scx - text.get_width() // 2, ex_bar_y - bar_h - 12))
+
+        # Facing direction arrow (when selected)
+        if self.selected:
+            cx, cy = self.center
+            scx, scy = camera.world_to_screen(cx, cy)
+            arrow_len = camera.scale(25)
+            ax = scx + math.cos(self.facing_angle) * arrow_len
+            ay = scy + math.sin(self.facing_angle) * arrow_len
+            pygame.draw.line(surface, (200, 200, 255),
+                             (int(scx), int(scy)), (int(ax), int(ay)), 2)
+            # Arrowhead
+            head_len = camera.scale(8)
+            for side in [-0.5, 0.5]:
+                hx = ax - math.cos(self.facing_angle + side) * head_len
+                hy = ay - math.sin(self.facing_angle + side) * head_len
+                pygame.draw.line(surface, (200, 200, 255),
+                                 (int(ax), int(ay)), (int(hx), int(hy)), 2)
 
         # Range circle for ranged units (when selected)
         if self.selected and self.is_ranged:

@@ -163,6 +163,13 @@ class SiegeScene(BattleScene):
         self.gate = None
         self.towers = []
         super().__init__(player_army, enemy_army)
+        # Override deployment zone for siege
+        wall_x = BATTLE_MAP_WIDTH // 2
+        if self.player_is_attacker:
+            self.deploy_zone = (50, 50, wall_x - 100, BATTLE_MAP_HEIGHT - 100)
+        else:
+            self.deploy_zone = (wall_x + 80, 50, BATTLE_MAP_WIDTH - wall_x - 130,
+                                BATTLE_MAP_HEIGHT - 100)
 
     def _generate_terrain(self):
         """Override: generate siege-specific terrain with walls."""
@@ -379,10 +386,37 @@ class SiegeScene(BattleScene):
                 surface.blit(select_surf, (sx, sy))
                 pygame.draw.rect(surface, (100, 200, 100), (sx, sy, sw, sh), 1)
 
+        # Right-click drag facing indicator
+        if self._right_dragging and self._right_click_pos and self._right_drag_pos:
+            import math as _m
+            sx1, sy1 = self._right_click_pos
+            sx2, sy2 = self._right_drag_pos
+            pygame.draw.circle(surface, (200, 200, 255), (int(sx1), int(sy1)), 6, 2)
+            dx, dy = sx2 - sx1, sy2 - sy1
+            d = max(1, (dx * dx + dy * dy) ** 0.5)
+            nx, ny = dx / d, dy / d
+            arrow_len = min(d, 60)
+            ax, ay = sx1 + nx * arrow_len, sy1 + ny * arrow_len
+            pygame.draw.line(surface, (200, 200, 255),
+                             (int(sx1), int(sy1)), (int(ax), int(ay)), 3)
+            for side in [-0.5, 0.5]:
+                head_angle = _m.atan2(ny, nx) + side
+                hx = ax - _m.cos(head_angle) * 12
+                hy = ay - _m.sin(head_angle) * 12
+                pygame.draw.line(surface, (200, 200, 255),
+                                 (int(ax), int(ay)), (int(hx), int(hy)), 3)
+
+        # Targeting indicators
+        self._draw_targeting_lines(surface)
+
         self._draw_hud(surface)
 
         # Siege info overlay
         self._draw_siege_info(surface)
+
+        # Deployment overlay
+        if self.deployment_phase:
+            self._draw_deployment(surface)
 
     def _draw_siege_info(self, surface):
         """Draw siege-specific info: gate HP, tower status."""
