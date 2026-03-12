@@ -190,7 +190,7 @@ class General:
         if not self.duel_opponent or not self.duel_opponent.alive:
             self.duel_state = DuelState.WON
             self.duels_won += 1
-            self.gain_xp(3)
+            # XP awarded post-battle, not during battle
             return
 
         opp = self.duel_opponent
@@ -258,7 +258,7 @@ class General:
             self.duel_state = DuelState.WON
             self.duels_won += 1
             self.kills += 1
-            self.gain_xp(3)
+            # XP awarded post-battle, not during battle
             opponent.duel_state = DuelState.LOST
         elif not self.alive:
             opponent.duel_state = DuelState.WON

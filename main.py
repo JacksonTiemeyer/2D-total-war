@@ -243,6 +243,9 @@ class Game:
             self.state = GameState.MAIN_MENU
             return
 
+        # Award post-battle XP to generals (A6: XP only on battle completion)
+        self._award_post_battle_xp()
+
         if self.battle.result == BattleResult.PLAYER_WIN:
             if self.current_enemy:
                 self.campaign.remove_army(self.current_enemy)
@@ -257,6 +260,36 @@ class Game:
         self.battle = None
         self.battle_stats = None
         self.state = GameState.CAMPAIGN
+
+    def _award_post_battle_xp(self):
+        """Award XP to generals after battle completion (not during battle)."""
+        if not self.battle or not self.battle_stats:
+            return
+        s = self.battle_stats
+        is_win = s["result"] == BattleResult.PLAYER_WIN
+        win_mult = 1.0 if is_win else 0.4
+
+        # Calculate enemy strength for XP scaling
+        enemy_initial = sum(sq["initial"] for sq in s["enemy_squads"])
+        player_initial = sum(sq["initial"] for sq in s["player_squads"])
+        strength_ratio = enemy_initial / max(1, player_initial)
+
+        # Casualty ratio (lower = better performance)
+        player_survived = sum(sq["alive"] for sq in s["player_squads"])
+        casualty_ratio = 1.0 - (player_survived / max(1, player_initial))
+
+        base_xp = 5
+        xp = int(base_xp * (1.0 + strength_ratio) * win_mult * (1.0 - casualty_ratio * 0.5))
+        xp = max(1, xp)  # always at least 1 XP
+
+        # Apply to campaign general
+        pa = self.campaign.player_army
+        pa.general_xp += xp
+        # Check level up
+        from battle.abilities import level_from_xp
+        new_level = level_from_xp(pa.general_xp)
+        if new_level > pa.general_level:
+            pa.general_level = new_level
 
     def _draw(self):
         if self.state == GameState.MAIN_MENU:

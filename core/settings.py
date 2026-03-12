@@ -85,10 +85,21 @@ REAR_DAMAGE_BONUS = 1.6        # 60% more damage from rear
 REAR_CHARGE_MORALE_SHOCK = 15  # instant morale hit from rear charge
 FLANK_MORALE_SHOCK = 5         # instant morale hit from flank charge
 
+# Movement Speed Tiers
+MOVE_MODE_WALK = "walk"
+MOVE_MODE_MARCH = "march"
+MOVE_MODE_RUN = "run"
+WALK_SPEED_MULT = 0.5
+MARCH_SPEED_MULT = 1.0
+RUN_SPEED_MULT_INFANTRY = 1.4
+RUN_SPEED_MULT_CAVALRY = 1.6
+
 # Exhaustion
 EXHAUSTION_MAX = 100.0
 EXHAUSTION_IDLE_RATE = 0.002        # per frame when standing still
-EXHAUSTION_MOVE_RATE = 0.008        # per frame when moving
+EXHAUSTION_WALK_RATE = 0.0          # per frame when walking (no exhaustion)
+EXHAUSTION_MARCH_RATE = 0.002       # per frame when marching (minimal)
+EXHAUSTION_MOVE_RATE = 0.008        # per frame when moving (legacy/run)
 EXHAUSTION_FIGHT_RATE = 0.015       # per frame when fighting
 EXHAUSTION_CHARGE_RATE = 0.020      # per frame when charging
 EXHAUSTION_MORALE_THRESHOLD = 30    # exhaustion level where morale starts draining
@@ -96,6 +107,12 @@ EXHAUSTION_MORALE_DRAIN = 0.02      # morale lost per frame above threshold
 EXHAUSTION_SPEED_PENALTY = 0.3      # max speed reduction at full exhaustion
 EXHAUSTION_DAMAGE_PENALTY = 0.25    # max damage reduction at full exhaustion
 EXHAUSTION_COOLDOWN_PENALTY = 0.4   # max attack cooldown increase at full exhaustion
+
+# Unit Collision
+COLLISION_GRID_CELL_SIZE = 30       # spatial grid cell size for collision detection
+COLLISION_PUSH_STRENGTH = 0.8       # how strongly soldiers push apart
+COLLISION_FRIENDLY_PUSH = 0.3       # softer push for friendly soldiers
+COLLISION_ENGAGE_RADIUS = 18        # distance at which soldiers become "engaged"
 
 # Terrain Effects
 HILL_RANGED_BONUS = 1.15          # +15% ranged damage from hill

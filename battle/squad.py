@@ -12,12 +12,17 @@ from core.settings import (
     FLANK_DAMAGE_BONUS, REAR_DAMAGE_BONUS,
     REAR_CHARGE_MORALE_SHOCK, FLANK_MORALE_SHOCK,
     EXHAUSTION_MAX, EXHAUSTION_IDLE_RATE, EXHAUSTION_MOVE_RATE,
+    EXHAUSTION_WALK_RATE, EXHAUSTION_MARCH_RATE,
     EXHAUSTION_FIGHT_RATE, EXHAUSTION_CHARGE_RATE,
     EXHAUSTION_MORALE_THRESHOLD, EXHAUSTION_MORALE_DRAIN,
     EXHAUSTION_SPEED_PENALTY,
     BRACE_CHARGE_MORALE_SHOCK, BRACE_MIN_IDLE_FRAMES,
     FORMATION_LOOSE_SPACING_MULT,
     VISION_INFANTRY, VISION_CAVALRY, VISION_HILL_BONUS,
+    MOVE_MODE_WALK, MOVE_MODE_MARCH, MOVE_MODE_RUN,
+    WALK_SPEED_MULT, MARCH_SPEED_MULT,
+    RUN_SPEED_MULT_INFANTRY, RUN_SPEED_MULT_CAVALRY,
+    COLLISION_ENGAGE_RADIUS,
 )
 from core.utils import distance, angle_between, normalize, clamp
 from battle.soldier import Soldier
@@ -71,6 +76,15 @@ class Squad:
         self.charging = False
         self.charge_timer = 0
         self.formation = Formation.LINE
+
+        # Movement mode (walk/march/run)
+        self.movement_mode = MOVE_MODE_MARCH
+
+        # Stances
+        self.defensive_stance = False    # hold position, engage nearby only
+        self.skirmish_stance = False     # ranged: retreat from approaching enemies
+        self.defensive_anchor_x = x     # position to return to in defensive stance
+        self.defensive_anchor_y = y
 
         # Veterancy modifiers
         self.vet_data = vet_data or {}
@@ -229,12 +243,21 @@ class Squad:
         return base
 
     @property
+    def movement_speed_mult(self):
+        """Speed multiplier from current movement mode."""
+        if self.movement_mode == MOVE_MODE_WALK:
+            return WALK_SPEED_MULT
+        elif self.movement_mode == MOVE_MODE_RUN:
+            return RUN_SPEED_MULT_CAVALRY if self.is_cavalry else RUN_SPEED_MULT_INFANTRY
+        return MARCH_SPEED_MULT
+
+    @property
     def effective_speed(self):
-        """Speed reduced by exhaustion, terrain, and formation."""
+        """Speed reduced by exhaustion, terrain, formation, and movement mode."""
         penalty = (self.exhaustion / EXHAUSTION_MAX) * EXHAUSTION_SPEED_PENALTY
         base = self.unit_stats.speed * (1.0 - penalty)
         _, _, speed_mult, _, _ = self.formation_mods
-        return base * self.terrain_mods.get("speed_mult", 1.0) * speed_mult
+        return base * self.terrain_mods.get("speed_mult", 1.0) * speed_mult * self.movement_speed_mult
 
     def _spawn_slash_effect(self, sx, sy, tx, ty):
         """Add a melee slash visual effect."""
@@ -288,13 +311,15 @@ class Squad:
                 self.state == SquadState.IDLE and
                 self.idle_frames >= BRACE_MIN_IDLE_FRAMES)
 
-    def give_move_order(self, tx, ty):
+    def give_move_order(self, tx, ty, movement_mode=None):
         self.target_x = tx
         self.target_y = ty
         self.target_squad = None
         self.state = SquadState.MOVING
         self.facing_angle = angle_between(self.x, self.y, tx, ty)
         self.idle_frames = 0
+        if movement_mode is not None:
+            self.movement_mode = movement_mode
 
     def give_attack_order(self, target_squad):
         self.target_squad = target_squad
@@ -308,6 +333,7 @@ class Squad:
             self.state = SquadState.CHARGING
             self.charging = True
             self.charge_timer = 0
+            self.movement_mode = MOVE_MODE_RUN  # charging always runs
         self.idle_frames = 0
 
     def update(self, all_squads):
@@ -368,6 +394,22 @@ class Squad:
             self.target_squad = None
             self.state = SquadState.IDLE
 
+        # Defensive stance: return to anchor if drifted and idle
+        if self.defensive_stance and self.state == SquadState.IDLE:
+            d = distance(self.x, self.y, self.defensive_anchor_x, self.defensive_anchor_y)
+            if d > MELEE_RANGE * 4:
+                self.give_move_order(self.defensive_anchor_x, self.defensive_anchor_y,
+                                     movement_mode=MOVE_MODE_MARCH)
+
+        # Defensive stance: auto-engage nearby enemies
+        if self.defensive_stance and self.state == SquadState.IDLE:
+            self._defensive_auto_engage(all_squads)
+
+        # Skirmish stance: retreat from approaching enemies
+        if self.skirmish_stance and self.is_ranged and self.state in (
+                SquadState.IDLE, SquadState.FIRING):
+            self._skirmish_retreat(all_squads)
+
         # Fire at will
         if self.is_ranged and self.fire_at_will and self.state == SquadState.IDLE:
             self._auto_acquire_ranged_target(all_squads)
@@ -389,16 +431,22 @@ class Squad:
         self.x, self.y = cx, cy
 
     def _update_exhaustion(self):
-        """Increase exhaustion based on current activity."""
+        """Increase exhaustion based on current activity and movement mode."""
         rate = EXHAUSTION_IDLE_RATE
         if self.state == SquadState.MOVING:
-            rate = EXHAUSTION_MOVE_RATE
+            # Movement exhaustion depends on mode
+            if self.movement_mode == MOVE_MODE_WALK:
+                rate = EXHAUSTION_WALK_RATE
+            elif self.movement_mode == MOVE_MODE_MARCH:
+                rate = EXHAUSTION_MARCH_RATE
+            else:
+                rate = EXHAUSTION_MOVE_RATE
         elif self.state == SquadState.CHARGING:
             rate = EXHAUSTION_CHARGE_RATE
         elif self.state == SquadState.FIGHTING:
             rate = EXHAUSTION_FIGHT_RATE
         elif self.state == SquadState.FIRING:
-            rate = EXHAUSTION_MOVE_RATE * 0.5
+            rate = EXHAUSTION_MARCH_RATE
         elif self.state == SquadState.BROKEN or self.state == SquadState.ROUTED:
             rate = EXHAUSTION_CHARGE_RATE  # fleeing is tiring
 
@@ -538,9 +586,17 @@ class Squad:
             return
         tx, ty = self.target_squad.center
         dist = distance(self.x, self.y, tx, ty)
-        if dist > self.unit_stats.range_distance * 1.1:
-            self.target_x = tx
-            self.target_y = ty
+        max_range = self.unit_stats.range_distance
+        if dist > max_range * 1.1:
+            # Move to max range, not directly on top of the target
+            dx, dy = tx - self.x, ty - self.y
+            d = max(1, (dx * dx + dy * dy) ** 0.5)
+            # Stop at 90% of max range (just within range)
+            approach_dist = d - max_range * 0.9
+            if approach_dist > 0:
+                nx, ny = dx / d, dy / d
+                self.target_x = self.x + nx * approach_dist
+                self.target_y = self.y + ny * approach_dist
             self._do_movement()
             return
         if dist < MELEE_RANGE * 3:
@@ -585,6 +641,45 @@ class Squad:
             self.target_squad = best
             self.state = SquadState.FIRING
 
+    def _defensive_auto_engage(self, all_squads):
+        """In defensive stance, engage enemies within close range but don't chase far."""
+        engage_range = MELEE_RANGE * 3
+        for sq in all_squads:
+            if sq.team == self.team or sq.is_destroyed:
+                continue
+            d = distance(self.x, self.y, sq.x, sq.y)
+            if d < engage_range:
+                self.give_attack_order(sq)
+                return
+
+    def _skirmish_retreat(self, all_squads):
+        """Ranged units in skirmish stance retreat from approaching enemies."""
+        flee_distance = self.unit_stats.range_distance * 0.4
+        closest_enemy = None
+        closest_dist = float('inf')
+        for sq in all_squads:
+            if sq.team == self.team or sq.is_destroyed:
+                continue
+            d = distance(self.x, self.y, sq.x, sq.y)
+            if d < closest_dist:
+                closest_dist = d
+                closest_enemy = sq
+        if closest_enemy and closest_dist < flee_distance:
+            # Retreat away from enemy
+            dx = self.x - closest_enemy.x
+            dy = self.y - closest_enemy.y
+            d = max(1, (dx * dx + dy * dy) ** 0.5)
+            retreat_dist = flee_distance - closest_dist + 50
+            retreat_x = self.x + (dx / d) * retreat_dist
+            retreat_y = self.y + (dy / d) * retreat_dist
+            # Clamp to map bounds
+            from core.settings import BATTLE_MAP_WIDTH, BATTLE_MAP_HEIGHT
+            retreat_x = max(50, min(BATTLE_MAP_WIDTH - 50, retreat_x))
+            retreat_y = max(50, min(BATTLE_MAP_HEIGHT - 50, retreat_y))
+            self.give_move_order(retreat_x, retreat_y, movement_mode=MOVE_MODE_RUN)
+            # Cannot fire while running
+            self.target_squad = None
+
     def _do_rout(self):
         angle = self.facing_angle + math.pi
         speed = self.effective_speed * 1.5
@@ -617,6 +712,36 @@ class Squad:
         return (min_x - padding, min_y - padding,
                 max_x - min_x + padding * 2, max_y - min_y + padding * 2)
 
+    def _draw_soldier_shape(self, surface, sx, sy, r, c):
+        """Draw a soldier with shape based on unit type."""
+        r = max(1, int(r))
+        if self.is_cavalry:
+            # Oval / elongated ellipse
+            r2 = max(1, int(r * 1.4))
+            pygame.draw.ellipse(surface, c, (sx - r2, sy - r, r2 * 2, r * 2))
+        elif self.is_spear:
+            # Diamond (rotated square)
+            points = [(sx, sy - r - 1), (sx + r + 1, sy),
+                       (sx, sy + r + 1), (sx - r - 1, sy)]
+            pygame.draw.polygon(surface, c, points)
+        elif self.is_ranged:
+            # Triangle pointing toward facing
+            fa = self.facing_angle
+            cos_a, sin_a = math.cos(fa), math.sin(fa)
+            tip_x = sx + cos_a * (r + 2)
+            tip_y = sy + sin_a * (r + 2)
+            left_x = sx + math.cos(fa + 2.4) * r
+            left_y = sy + math.sin(fa + 2.4) * r
+            right_x = sx + math.cos(fa - 2.4) * r
+            right_y = sy + math.sin(fa - 2.4) * r
+            points = [(int(tip_x), int(tip_y)),
+                       (int(left_x), int(left_y)),
+                       (int(right_x), int(right_y))]
+            pygame.draw.polygon(surface, c, points)
+        else:
+            # Square for melee infantry
+            pygame.draw.rect(surface, c, (sx - r, sy - r, r * 2, r * 2))
+
     def draw(self, surface, camera, fog_hidden=False):
         if fog_hidden:
             return
@@ -639,11 +764,10 @@ class Squad:
             r = camera.scale(SOLDIER_RADIUS)
             hp_ratio = s.health / s.max_health
             if s.hit_flash_timer > 0:
-                # White flash when hit
                 c = (255, 255, 255)
             else:
                 c = tuple(int(ch * (0.4 + 0.6 * hp_ratio)) for ch in color)
-            pygame.draw.circle(surface, c, (sx, sy), r)
+            self._draw_soldier_shape(surface, sx, sy, r, c)
 
         # Draw visual effects (slashes and projectiles)
         for e in self.visual_effects:
@@ -747,6 +871,16 @@ class Squad:
                 label += " WAVERING"
             elif self.is_braced:
                 label += " BRACED"
+            # Movement mode indicator
+            if self.state == SquadState.MOVING:
+                mode_labels = {MOVE_MODE_WALK: "WALK", MOVE_MODE_MARCH: "MARCH",
+                               MOVE_MODE_RUN: "RUN"}
+                label += f" {mode_labels.get(self.movement_mode, '')}"
+            # Stance indicators
+            if self.defensive_stance:
+                label += " [DEF]"
+            if self.skirmish_stance:
+                label += " [SKIRM]"
             if self.formation != Formation.LINE:
                 label += f" <{self.formation.upper()}>"
             terrain_type = self.terrain_mods.get("terrain_type")

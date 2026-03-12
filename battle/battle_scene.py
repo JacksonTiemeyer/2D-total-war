@@ -7,13 +7,16 @@ from core.settings import (
     SCREEN_WIDTH, SCREEN_HEIGHT, BATTLE_MAP_WIDTH, BATTLE_MAP_HEIGHT,
     TEAM_COLORS, TEAM_COLORS_LIGHT, GREEN, DARK_GREEN, SAND, BROWN,
     BLACK, WHITE, GREY, GOLD, YELLOW, ORANGE,
-    EXHAUSTION_MAX,
+    EXHAUSTION_MAX, MELEE_RANGE,
     HILL_RANGED_BONUS, HILL_CHARGE_DOWNHILL_BONUS, HILL_SPEED_UPHILL_PENALTY,
     FOREST_CAVALRY_SPEED_MULT, FOREST_RANGED_ACCURACY_MULT, FOREST_MELEE_DEFENSE_BONUS,
     VISION_INFANTRY, VISION_CAVALRY, FOG_ALPHA,
     WEATHER_TYPES, WEATHER_RAIN_ACCURACY, WEATHER_RAIN_EXHAUSTION,
     WEATHER_FOG_VISION, WEATHER_MUD_SPEED, WEATHER_MUD_CHARGE,
     WEATHER_WIND_ACCURACY,
+    SOLDIER_RADIUS, COLLISION_GRID_CELL_SIZE, COLLISION_PUSH_STRENGTH,
+    COLLISION_FRIENDLY_PUSH, COLLISION_ENGAGE_RADIUS,
+    MOVE_MODE_WALK, MOVE_MODE_MARCH, MOVE_MODE_RUN,
 )
 from core.camera import Camera
 from core.utils import distance, point_in_rect, angle_between
@@ -62,6 +65,10 @@ class BattleScene:
         self.deployment_phase = True
         self.deploy_zone = (50, 50, 500, BATTLE_MAP_HEIGHT - 100)  # left side zone
         self._deploy_dragging = None  # squad being dragged during deployment
+
+        # Hover tracking for targeting indicator (A8)
+        self._hovered_squad = None
+        self._mouse_world_pos = (0, 0)
 
         # Weather
         self.weather = random.choice(WEATHER_TYPES)
@@ -242,6 +249,69 @@ class BattleScene:
                     g.visible = True
                     break
 
+    def _resolve_collisions(self):
+        """Resolve soldier-soldier collisions using spatial grid."""
+        cell_size = COLLISION_GRID_CELL_SIZE
+        grid = {}
+
+        # Build spatial grid of all living soldiers
+        all_soldiers = []
+        for sq in self.all_squads:
+            if sq.is_destroyed or sq.state == SquadState.ROUTED:
+                continue
+            for s in sq.alive_soldiers:
+                cx = int(s.x // cell_size)
+                cy = int(s.y // cell_size)
+                key = (cx, cy)
+                if key not in grid:
+                    grid[key] = []
+                grid[key].append((s, sq))
+                all_soldiers.append((s, sq))
+
+        push_radius = SOLDIER_RADIUS * 2.5
+        # Check collisions in neighboring cells
+        for (s1, sq1) in all_soldiers:
+            cx = int(s1.x // cell_size)
+            cy = int(s1.y // cell_size)
+            for dx in range(-1, 2):
+                for dy in range(-1, 2):
+                    key = (cx + dx, cy + dy)
+                    if key not in grid:
+                        continue
+                    for (s2, sq2) in grid[key]:
+                        if s1 is s2:
+                            continue
+                        ddx = s1.x - s2.x
+                        ddy = s1.y - s2.y
+                        dist_sq = ddx * ddx + ddy * ddy
+                        if dist_sq >= push_radius * push_radius or dist_sq < 0.01:
+                            continue
+                        dist_val = dist_sq ** 0.5
+                        overlap = push_radius - dist_val
+                        nx = ddx / dist_val
+                        ny = ddy / dist_val
+
+                        same_team = sq1.team == sq2.team
+                        if same_team:
+                            # Soft push for friendlies
+                            push = overlap * COLLISION_FRIENDLY_PUSH * 0.5
+                            s1.x += nx * push
+                            s1.y += ny * push
+                            s2.x -= nx * push
+                            s2.y -= ny * push
+                        else:
+                            # Hard push for enemies, mass-weighted
+                            mass1 = sq1.unit_stats.mass
+                            mass2 = sq2.unit_stats.mass
+                            total_mass = mass1 + mass2
+                            # Lighter unit gets pushed more
+                            push1 = overlap * COLLISION_PUSH_STRENGTH * (mass2 / total_mass)
+                            push2 = overlap * COLLISION_PUSH_STRENGTH * (mass1 / total_mass)
+                            s1.x += nx * push1
+                            s1.y += ny * push1
+                            s2.x -= nx * push2
+                            s2.y -= ny * push2
+
     def _deploy_armies(self, player_army, enemy_army):
         start_x = 300
         start_y = BATTLE_MAP_HEIGHT // 2 - 300
@@ -322,6 +392,27 @@ class BattleScene:
                         self.speed_multiplier = 2
                     elif event.key == pygame.K_3:
                         self.speed_multiplier = 4
+            # Movement mode hotkeys
+            elif event.key == pygame.K_z:
+                for sq in self.selected_squads:
+                    sq.movement_mode = MOVE_MODE_WALK
+            elif event.key == pygame.K_x:
+                for sq in self.selected_squads:
+                    sq.movement_mode = MOVE_MODE_MARCH
+            elif event.key == pygame.K_c:
+                for sq in self.selected_squads:
+                    sq.movement_mode = MOVE_MODE_RUN
+            # Stance toggles
+            elif event.key == pygame.K_d:
+                for sq in self.selected_squads:
+                    sq.defensive_stance = not sq.defensive_stance
+                    if sq.defensive_stance:
+                        sq.defensive_anchor_x = sq.x
+                        sq.defensive_anchor_y = sq.y
+            elif event.key == pygame.K_s:
+                for sq in self.selected_squads:
+                    if sq.is_ranged:
+                        sq.skirmish_stance = not sq.skirmish_stance
             # Ability hotkeys: Q, W, E, R
             elif event.key in (pygame.K_q, pygame.K_w, pygame.K_e, pygame.K_r):
                 self._handle_ability_key(event.key)
@@ -351,6 +442,10 @@ class BattleScene:
                 self._right_drag_pos = None
 
         if event.type == pygame.MOUSEMOTION:
+            # Track hover for targeting indicators
+            wx, wy = self.camera.screen_to_world(*event.pos)
+            self._mouse_world_pos = (wx, wy)
+            self._hovered_squad = self._find_squad_at(wx, wy)
             if self.selecting:
                 self.select_end = event.pos
             if self._right_click_pos:
@@ -360,6 +455,18 @@ class BattleScene:
                 if drag_dist > 15:
                     self._right_dragging = True
                 self._right_drag_pos = event.pos
+
+    def _find_squad_at(self, wx, wy):
+        """Find squad under world coordinates for hover detection."""
+        for sq in self.all_squads:
+            if sq.is_destroyed:
+                continue
+            if sq.team != 0 and self.fog_enabled and not sq.visible:
+                continue
+            bbox = sq.get_bounding_box()
+            if point_in_rect(wx, wy, *bbox):
+                return sq
+        return None
 
     def _handle_ability_key(self, key):
         """Activate general ability via Q/W/E/R hotkeys."""
@@ -621,6 +728,9 @@ class BattleScene:
             sq.terrain_mods = self.get_terrain_modifiers(sq)
             sq.update(self.all_squads)
 
+        # Resolve soldier-soldier collisions
+        self._resolve_collisions()
+
         for g in self.player_generals:
             g.update(self.player_squads, self.enemy_squads)
         for g in self.enemy_generals:
@@ -642,16 +752,8 @@ class BattleScene:
             if sq.state == SquadState.FIRING and self.battle_timer % 60 == 0:
                 audio.play("arrow_volley")
 
-        # Track kills for XP
-        for g in self.all_generals:
-            if g.alive and g.kills > 0:
-                new_kills = g.kills
-                if not hasattr(g, '_prev_kills'):
-                    g._prev_kills = 0
-                gained = new_kills - g._prev_kills
-                if gained > 0:
-                    g.gain_xp(gained)
-                    g._prev_kills = new_kills
+        # XP is now awarded post-battle, not during battle (A6 fix)
+        # Track kills for post-battle XP calculation only
 
         # Check general deaths
         dead_generals = [g for g in self.all_generals if not g.alive]
@@ -1001,11 +1103,15 @@ class BattleScene:
             self._draw_deployment(surface)
 
     def _draw_targeting_lines(self, surface):
-        """Draw lines showing targeting relationships."""
+        """Draw targeting lines only for selected units and hovered units."""
         target_surf = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
 
-        # Player squads -> their targets (green/yellow lines)
-        for sq in self.player_squads:
+        # Determine which squads to show targeting for
+        show_squads = set(self.selected_squads)
+        if self._hovered_squad:
+            show_squads.add(self._hovered_squad)
+
+        for sq in show_squads:
             if sq.is_destroyed or not sq.target_squad:
                 continue
             if sq.target_squad.is_destroyed:
@@ -1014,37 +1120,18 @@ class BattleScene:
             tx, ty = sq.target_squad.center
             sx1, sy1 = self.camera.world_to_screen(cx, cy)
             sx2, sy2 = self.camera.world_to_screen(tx, ty)
-            if sq.state == SquadState.FIRING:
-                color = (100, 200, 255, 100)  # blue for ranged
-            elif sq.state in (SquadState.CHARGING, SquadState.FIGHTING):
-                color = (100, 255, 100, 120)  # green for melee
+            if sq.team == 0:
+                if sq.state == SquadState.FIRING:
+                    color = (100, 200, 255, 100)
+                elif sq.state in (SquadState.CHARGING, SquadState.FIGHTING):
+                    color = (100, 255, 100, 120)
+                else:
+                    color = (200, 200, 100, 80)
             else:
-                color = (200, 200, 100, 80)  # yellow for moving to attack
+                color = (255, 80, 80, 90)
             pygame.draw.line(target_surf, color,
                              (int(sx1), int(sy1)), (int(sx2), int(sy2)), 2)
-            # Small diamond at target end
             pygame.draw.circle(target_surf, color, (int(sx2), int(sy2)), 4)
-
-        # Visible enemy squads -> their targets (red lines, only if targeting player)
-        for sq in self.enemy_squads:
-            if sq.is_destroyed or not sq.target_squad:
-                continue
-            if self.fog_enabled and not sq.visible:
-                continue
-            if sq.target_squad.is_destroyed:
-                continue
-            # Only show if targeting a player unit
-            if sq.target_squad.team != 0:
-                continue
-            cx, cy = sq.center
-            tx, ty = sq.target_squad.center
-            sx1, sy1 = self.camera.world_to_screen(cx, cy)
-            sx2, sy2 = self.camera.world_to_screen(tx, ty)
-            color = (255, 80, 80, 90)  # red for enemy targeting
-            pygame.draw.line(target_surf, color,
-                             (int(sx1), int(sy1)), (int(sx2), int(sy2)), 1)
-            # Small x at target end
-            pygame.draw.circle(target_surf, (255, 60, 60, 120), (int(sx2), int(sy2)), 3, 1)
 
         surface.blit(target_surf, (0, 0))
 
@@ -1158,7 +1245,7 @@ class BattleScene:
         help_y = SCREEN_HEIGHT - 24
         help_text = small_font.render(
             "[SPACE] Pause  [1/2/3] Speed  [F] Fire  [V] Fog  [Q/W/E/R] Abilities  "
-            "[Ctrl+1-5] Formation  [LMB] Select  [RMB] Order  [RMB+Drag] Facing",
+            "[Ctrl+1-5] Formation  [Z/X/C] Walk/March/Run  [D] Defensive  [S] Skirmish",
             True, (180, 180, 180))
         surface.blit(help_text, (10, help_y))
 
