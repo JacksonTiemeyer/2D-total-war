@@ -53,6 +53,7 @@ class Game:
         self.battle_stats = None   # post-battle summary data
         self.skirmish_setup = None # skirmish army builder
         self.is_skirmish = False   # true when battle launched from skirmish mode
+        self.is_siege = False      # true when battle is a siege
 
     def run(self):
         while self.running:
@@ -105,10 +106,16 @@ class Game:
     def _handle_pre_battle_event(self, event):
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_RETURN or event.key == pygame.K_b:
-                # Start battle
+                # Start battle - check if siege
                 player_data = self.campaign.player_army.get_battle_data()
                 enemy_data = self.current_enemy.get_battle_data()
-                self.battle = BattleScene(player_data, enemy_data)
+                self.is_siege = self._check_siege()
+                if self.is_siege:
+                    from battle.siege_scene import SiegeScene
+                    self.battle = SiegeScene(player_data, enemy_data,
+                                            player_is_attacker=True)
+                else:
+                    self.battle = BattleScene(player_data, enemy_data)
                 self.state = GameState.BATTLE
             elif event.key == pygame.K_ESCAPE or event.key == pygame.K_r:
                 # Retreat - move player away
@@ -155,6 +162,19 @@ class Game:
             self.battle.update()
         elif self.state == GameState.SKIRMISH_SETUP:
             pass  # skirmish setup is event-driven
+
+    def _check_siege(self):
+        """Check if the battle should be a siege (near a castle settlement)."""
+        if not self.campaign or not self.current_enemy:
+            return False
+        from campaign.settlement import SettlementType
+        from core.utils import distance
+        for s in self.campaign.settlements:
+            if s.settlement_type == SettlementType.CASTLE:
+                if distance(self.current_enemy.x, self.current_enemy.y,
+                            s.x, s.y) < 60:
+                    return True
+        return False
 
     def _collect_battle_stats(self):
         """Gather end-of-battle statistics for the summary screen."""
@@ -305,7 +325,8 @@ class Game:
         small = pygame.font.SysFont(None, 22)
         tiny = pygame.font.SysFont(None, 18)
 
-        title = font.render("BATTLE!", True, GOLD)
+        title_text = "SIEGE BATTLE!" if self._check_siege() else "BATTLE!"
+        title = font.render(title_text, True, GOLD)
         self.screen.blit(title, (SCREEN_WIDTH // 2 - title.get_width() // 2, 60))
 
         # Player army info
