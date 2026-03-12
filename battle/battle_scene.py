@@ -11,6 +11,9 @@ from core.settings import (
     HILL_RANGED_BONUS, HILL_CHARGE_DOWNHILL_BONUS, HILL_SPEED_UPHILL_PENALTY,
     FOREST_CAVALRY_SPEED_MULT, FOREST_RANGED_ACCURACY_MULT, FOREST_MELEE_DEFENSE_BONUS,
     VISION_INFANTRY, VISION_CAVALRY, FOG_ALPHA,
+    WEATHER_TYPES, WEATHER_RAIN_ACCURACY, WEATHER_RAIN_EXHAUSTION,
+    WEATHER_FOG_VISION, WEATHER_MUD_SPEED, WEATHER_MUD_CHARGE,
+    WEATHER_WIND_ACCURACY,
 )
 from core.camera import Camera
 from core.utils import distance, point_in_rect
@@ -48,6 +51,12 @@ class BattleScene:
         self.battle_timer = 0
         self.speed_multiplier = 1
         self.fog_enabled = True  # fog of war toggle
+
+        # Weather
+        self.weather = random.choice(WEATHER_TYPES)
+        self.wind_direction = random.uniform(-1, 1)  # -1 = left, +1 = right
+        self.weather_particles = []
+        self._init_weather_particles()
 
         # Terrain features
         self.terrain = []
@@ -97,6 +106,57 @@ class BattleScene:
                 mods["speed_mult"] = FOREST_CAVALRY_SPEED_MULT
             mods["ranged_accuracy_mult"] = FOREST_RANGED_ACCURACY_MULT
             mods["melee_defense_mult"] = FOREST_MELEE_DEFENSE_BONUS
+
+        # Apply weather modifiers
+        wmods = self.get_weather_modifiers()
+        mods["ranged_accuracy_mult"] *= wmods["ranged_accuracy"]
+        mods["speed_mult"] *= wmods["speed"]
+        mods["charge_mult"] *= wmods["charge"]
+        return mods
+
+    def _init_weather_particles(self):
+        """Create initial particle pool for weather visuals."""
+        if self.weather == "rain":
+            for _ in range(150):
+                self.weather_particles.append([
+                    random.randint(0, SCREEN_WIDTH),
+                    random.randint(0, SCREEN_HEIGHT),
+                    random.uniform(3, 7),  # speed
+                ])
+        elif self.weather == "fog":
+            for _ in range(30):
+                self.weather_particles.append([
+                    random.randint(0, SCREEN_WIDTH),
+                    random.randint(0, SCREEN_HEIGHT),
+                    random.randint(60, 150),  # radius
+                ])
+        elif self.weather == "wind":
+            for _ in range(80):
+                self.weather_particles.append([
+                    random.randint(0, SCREEN_WIDTH),
+                    random.randint(0, SCREEN_HEIGHT),
+                    random.uniform(2, 5),  # speed
+                ])
+
+    def get_weather_modifiers(self):
+        """Return global combat modifiers based on weather."""
+        mods = {
+            "ranged_accuracy": 1.0,
+            "exhaustion_rate": 1.0,
+            "speed": 1.0,
+            "charge": 1.0,
+            "vision": 1.0,
+        }
+        if self.weather == "rain":
+            mods["ranged_accuracy"] = WEATHER_RAIN_ACCURACY
+            mods["exhaustion_rate"] = WEATHER_RAIN_EXHAUSTION
+        elif self.weather == "fog":
+            mods["vision"] = WEATHER_FOG_VISION
+        elif self.weather == "mud":
+            mods["speed"] = WEATHER_MUD_SPEED
+            mods["charge"] = WEATHER_MUD_CHARGE
+        elif self.weather == "wind":
+            mods["ranged_accuracy"] = 1.0 + self.wind_direction * WEATHER_WIND_ACCURACY
         return mods
 
     def _is_los_blocked(self, x1, y1, x2, y2):
@@ -135,14 +195,15 @@ class BattleScene:
             return
 
         # Build list of (x, y, vision_radius) for all player units
+        weather_vis = self.get_weather_modifiers()["vision"]
         vision_sources = []
         for sq in self.player_squads:
             if not sq.is_destroyed:
                 cx, cy = sq.center
-                vision_sources.append((cx, cy, sq.vision_radius))
+                vision_sources.append((cx, cy, sq.vision_radius * weather_vis))
         for g in self.player_generals:
             if g.alive:
-                base_v = VISION_CAVALRY  # generals see far
+                base_v = VISION_CAVALRY * weather_vis
                 vision_sources.append((g.x, g.y, base_v))
 
         # Check each enemy squad
@@ -741,7 +802,49 @@ class BattleScene:
                 surface.blit(select_surf, (sx, sy))
                 pygame.draw.rect(surface, (100, 200, 100), (sx, sy, sw, sh), 1)
 
+        # Weather particles on top
+        self._draw_weather(surface)
+
         self._draw_hud(surface)
+
+    def _draw_weather(self, surface):
+        """Draw weather particle effects."""
+        if self.weather == "clear":
+            return
+        elif self.weather == "rain":
+            for p in self.weather_particles:
+                p[1] += p[2]  # fall
+                p[0] += 1     # slight angle
+                if p[1] > SCREEN_HEIGHT:
+                    p[1] = 0
+                    p[0] = random.randint(0, SCREEN_WIDTH)
+                pygame.draw.line(surface, (150, 170, 220),
+                                 (int(p[0]), int(p[1])),
+                                 (int(p[0]) + 1, int(p[1]) + 4))
+        elif self.weather == "fog":
+            fog_surf = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+            for p in self.weather_particles:
+                p[0] += random.uniform(-0.3, 0.3)  # drift
+                alpha = random.randint(15, 35)
+                r = p[2]
+                pygame.draw.circle(fog_surf, (200, 200, 210, alpha),
+                                   (int(p[0]) % SCREEN_WIDTH, int(p[1])), int(r))
+            surface.blit(fog_surf, (0, 0))
+        elif self.weather == "mud":
+            # Brown tint overlay
+            mud_surf = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+            mud_surf.fill((80, 50, 20, 25))
+            surface.blit(mud_surf, (0, 0))
+        elif self.weather == "wind":
+            for p in self.weather_particles:
+                p[0] += p[2] * self.wind_direction * 2
+                p[1] += random.uniform(-0.5, 0.5)
+                if p[0] > SCREEN_WIDTH or p[0] < 0:
+                    p[0] = 0 if self.wind_direction > 0 else SCREEN_WIDTH
+                    p[1] = random.randint(0, SCREEN_HEIGHT)
+                pygame.draw.line(surface, (180, 180, 160),
+                                 (int(p[0]), int(p[1])),
+                                 (int(p[0]) + int(3 * self.wind_direction), int(p[1])))
 
     def _draw_fog(self, surface):
         """Draw fog of war overlay with vision holes for player units."""
@@ -785,6 +888,15 @@ class BattleScene:
 
         speed_text = font.render(f"Speed: {self.speed_multiplier}x", True, YELLOW)
         surface.blit(speed_text, (SCREEN_WIDTH // 2 + 100, 8))
+
+        if self.weather != "clear":
+            weather_colors = {
+                "rain": (100, 150, 255), "fog": (180, 180, 200),
+                "mud": (160, 120, 60), "wind": (180, 200, 160),
+            }
+            wc = weather_colors.get(self.weather, WHITE)
+            w_text = font.render(f"Weather: {self.weather.title()}", True, wc)
+            surface.blit(w_text, (SCREEN_WIDTH // 2 - 250, 8))
 
         if self.paused:
             pause_text = font.render("PAUSED", True, YELLOW)

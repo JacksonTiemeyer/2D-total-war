@@ -118,6 +118,15 @@ FORMATION_SQUARE_COLS_RATIO = 1.0    # equal
 FORMATION_LOOSE_SPACING_MULT = 1.8   # wider spacing
 FORMATION_WEDGE_ANGLE = 0.6          # radians, half-angle of V
 
+# Weather Effects
+WEATHER_TYPES = ["clear", "rain", "fog", "mud", "wind"]
+WEATHER_RAIN_ACCURACY = 0.8      # -20% ranged accuracy
+WEATHER_RAIN_EXHAUSTION = 1.3    # +30% exhaustion rate
+WEATHER_FOG_VISION = 0.5         # halve vision radius
+WEATHER_MUD_SPEED = 0.7          # -30% movement speed
+WEATHER_MUD_CHARGE = 0.5         # -50% charge bonus
+WEATHER_WIND_ACCURACY = 0.15     # +/-15% ranged accuracy
+
 # Vision / Fog of War
 VISION_INFANTRY = 200
 VISION_CAVALRY = 250
