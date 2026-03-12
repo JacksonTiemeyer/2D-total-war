@@ -35,6 +35,8 @@ class GameState:
     CAMPAIGN = "campaign"
     BATTLE = "battle"
     PRE_BATTLE = "pre_battle"
+    POST_BATTLE = "post_battle"
+    SKIRMISH_SETUP = "skirmish_setup"
 
 
 class Game:
@@ -48,6 +50,9 @@ class Game:
         self.campaign = None
         self.battle = None
         self.current_enemy = None  # enemy army for pending battle
+        self.battle_stats = None   # post-battle summary data
+        self.skirmish_setup = None # skirmish army builder
+        self.is_skirmish = False   # true when battle launched from skirmish mode
 
     def run(self):
         while self.running:
@@ -72,12 +77,21 @@ class Game:
                 self._handle_pre_battle_event(event)
             elif self.state == GameState.BATTLE:
                 self._handle_battle_event(event)
+            elif self.state == GameState.POST_BATTLE:
+                self._handle_post_battle_event(event)
+            elif self.state == GameState.SKIRMISH_SETUP:
+                self._handle_skirmish_event(event)
 
     def _handle_menu_event(self, event):
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_RETURN or event.key == pygame.K_SPACE:
                 self.campaign = CampaignScene()
                 self.state = GameState.CAMPAIGN
+            elif event.key == pygame.K_s:
+                # Skirmish mode
+                from battle.skirmish_setup import SkirmishSetup
+                self.skirmish_setup = SkirmishSetup()
+                self.state = GameState.SKIRMISH_SETUP
             elif event.key == pygame.K_ESCAPE:
                 self.running = False
 
@@ -99,9 +113,29 @@ class Game:
     def _handle_battle_event(self, event):
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_RETURN and self.battle.result != BattleResult.ONGOING:
-                self._resolve_battle()
+                self._collect_battle_stats()
+                self.state = GameState.POST_BATTLE
                 return
         self.battle.handle_event(event)
+
+    def _handle_post_battle_event(self, event):
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_RETURN:
+                self._resolve_battle()
+
+    def _handle_skirmish_event(self, event):
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_ESCAPE:
+                self.skirmish_setup = None
+                self.state = GameState.MAIN_MENU
+                return
+        if self.skirmish_setup:
+            result = self.skirmish_setup.handle_event(event)
+            if result:
+                # result is (player_data, enemy_data)
+                self.battle = BattleScene(result[0], result[1])
+                self.is_skirmish = True
+                self.state = GameState.BATTLE
 
     def _update(self):
         if self.state == GameState.CAMPAIGN:
@@ -112,18 +146,83 @@ class Game:
                 self.state = GameState.PRE_BATTLE
         elif self.state == GameState.BATTLE:
             self.battle.update()
+        elif self.state == GameState.SKIRMISH_SETUP:
+            pass  # skirmish setup is event-driven
+
+    def _collect_battle_stats(self):
+        """Gather end-of-battle statistics for the summary screen."""
+        b = self.battle
+        stats = {
+            "result": b.result,
+            "duration_frames": b.battle_timer,
+            "player_squads": [],
+            "enemy_squads": [],
+            "player_generals": [],
+            "enemy_generals": [],
+            "total_player_kills": 0,
+            "total_enemy_kills": 0,
+            "loot_gold": 0,
+        }
+        for sq in b.player_squads:
+            entry = {
+                "name": sq.unit_stats.name,
+                "initial": sq.initial_count,
+                "alive": sq.alive_count,
+                "kills": sq.kills,
+                "exhaustion": sq.exhaustion_display,
+            }
+            stats["player_squads"].append(entry)
+            stats["total_player_kills"] += sq.kills
+        for sq in b.enemy_squads:
+            entry = {
+                "name": sq.unit_stats.name,
+                "initial": sq.initial_count,
+                "alive": sq.alive_count,
+                "kills": sq.kills,
+            }
+            stats["enemy_squads"].append(entry)
+            stats["total_enemy_kills"] += sq.kills
+        # General stats (include dead ones too via original lists)
+        for g in b.player_generals + [g for g in getattr(b, '_dead_generals', []) if g.team == 0]:
+            stats["player_generals"].append({
+                "name": g.name, "type": g.general_type,
+                "kills": g.kills, "duels_won": g.duels_won,
+                "level": g.level, "alive": g.alive,
+            })
+        for g in b.enemy_generals + [g for g in getattr(b, '_dead_generals', []) if g.team == 1]:
+            stats["enemy_generals"].append({
+                "name": g.name, "type": g.general_type,
+                "kills": g.kills, "duels_won": g.duels_won,
+                "level": g.level, "alive": g.alive,
+            })
+        # Loot calculation
+        if b.result == BattleResult.PLAYER_WIN and self.current_enemy:
+            stats["loot_gold"] = 50 + len(self.current_enemy.squads) * 20
+        # MVP squad
+        all_player = stats["player_squads"]
+        if all_player:
+            mvp = max(all_player, key=lambda s: s["kills"])
+            stats["mvp"] = mvp["name"] if mvp["kills"] > 0 else None
+        else:
+            stats["mvp"] = None
+        self.battle_stats = stats
 
     def _resolve_battle(self):
+        """Apply battle results to campaign and return."""
+        if self.is_skirmish:
+            # Skirmish - just go back to menu
+            self.battle = None
+            self.battle_stats = None
+            self.is_skirmish = False
+            self.state = GameState.MAIN_MENU
+            return
+
         if self.battle.result == BattleResult.PLAYER_WIN:
-            # Remove enemy army from campaign
             if self.current_enemy:
                 self.campaign.remove_army(self.current_enemy)
-                # Loot gold
-                self.campaign.player_army.gold += 50 + len(self.current_enemy.squads) * 20
+                self.campaign.player_army.gold += self.battle_stats.get("loot_gold", 0)
         else:
-            # Player lost - lose some squads
             if self.campaign.player_army.squads:
-                # Lose half the army
                 losses = len(self.campaign.player_army.squads) // 2
                 for _ in range(max(1, losses)):
                     if self.campaign.player_army.squads:
@@ -131,6 +230,7 @@ class Game:
 
         self.current_enemy = None
         self.battle = None
+        self.battle_stats = None
         self.state = GameState.CAMPAIGN
 
     def _draw(self):
@@ -142,6 +242,11 @@ class Game:
             self._draw_pre_battle()
         elif self.state == GameState.BATTLE:
             self.battle.draw(self.screen)
+        elif self.state == GameState.POST_BATTLE:
+            self._draw_post_battle()
+        elif self.state == GameState.SKIRMISH_SETUP:
+            if self.skirmish_setup:
+                self.skirmish_setup.draw(self.screen)
 
         pygame.display.flip()
 
@@ -172,15 +277,16 @@ class Game:
             self.screen.blit(text, (SCREEN_WIDTH // 2 - text.get_width() // 2, y))
             y += 28
 
-        # Start prompt
-        prompt = font.render("Press ENTER or SPACE to begin", True, WHITE)
-        # Blink effect
+        # Start prompts
+        prompt = font.render("[ENTER] Campaign Mode", True, WHITE)
         if pygame.time.get_ticks() % 1000 < 700:
-            self.screen.blit(prompt, (SCREEN_WIDTH // 2 - prompt.get_width() // 2, 500))
+            self.screen.blit(prompt, (SCREEN_WIDTH // 2 - prompt.get_width() // 2, 480))
 
-        # Controls summary
+        skirmish = font.render("[S] Skirmish Mode", True, (180, 200, 255))
+        self.screen.blit(skirmish, (SCREEN_WIDTH // 2 - skirmish.get_width() // 2, 520))
+
         controls = small.render("ESC to quit", True, (100, 100, 100))
-        self.screen.blit(controls, (SCREEN_WIDTH // 2 - controls.get_width() // 2, 550))
+        self.screen.blit(controls, (SCREEN_WIDTH // 2 - controls.get_width() // 2, 570))
 
     def _draw_pre_battle(self):
         self.screen.fill((30, 25, 20))
@@ -237,6 +343,150 @@ class Game:
         opt2 = small.render("[ESC / R] Retreat", True, (200, 150, 100))
         self.screen.blit(opt1, (SCREEN_WIDTH // 2 - 80, opt_y))
         self.screen.blit(opt2, (SCREEN_WIDTH // 2 - 80, opt_y + 30))
+
+    def _draw_post_battle(self):
+        """Draw post-battle summary screen."""
+        self.screen.fill((20, 18, 15))
+        s = self.battle_stats
+        if not s:
+            return
+
+        font = pygame.font.SysFont(None, 48)
+        med = pygame.font.SysFont(None, 24)
+        small = pygame.font.SysFont(None, 20)
+        tiny = pygame.font.SysFont(None, 17)
+
+        # Title
+        is_win = s["result"] == BattleResult.PLAYER_WIN
+        title_text = "VICTORY!" if is_win else "DEFEAT"
+        title_color = GOLD if is_win else (200, 50, 50)
+        title = font.render(title_text, True, title_color)
+        self.screen.blit(title, (SCREEN_WIDTH // 2 - title.get_width() // 2, 30))
+
+        # Duration
+        mins = s["duration_frames"] // (60 * 60)
+        secs = (s["duration_frames"] // 60) % 60
+        dur = small.render(f"Battle Duration: {mins:02d}:{secs:02d}", True, (160, 160, 160))
+        self.screen.blit(dur, (SCREEN_WIDTH // 2 - dur.get_width() // 2, 80))
+
+        # Two columns
+        col_left = 60
+        col_right = SCREEN_WIDTH // 2 + 30
+        col_w = SCREEN_WIDTH // 2 - 90
+
+        # Left column - Your Army
+        y = 120
+        header = med.render("Your Forces", True, (100, 150, 255))
+        self.screen.blit(header, (col_left, y))
+        y += 30
+
+        # Column headers
+        hdr = tiny.render(f"{'Unit':<20} {'Alive':>8} {'Killed':>8} {'Kills':>8}", True, (140, 140, 140))
+        self.screen.blit(hdr, (col_left, y))
+        y += 5
+        pygame.draw.line(self.screen, (60, 60, 60), (col_left, y + 12), (col_left + col_w, y + 12))
+        y += 16
+
+        total_started = 0
+        total_survived = 0
+        for sq in s["player_squads"]:
+            killed = sq["initial"] - sq["alive"]
+            total_started += sq["initial"]
+            total_survived += sq["alive"]
+            # Color code: green if all survived, red if wiped
+            if sq["alive"] == 0:
+                color = (180, 60, 60)
+            elif sq["alive"] < sq["initial"]:
+                color = (220, 200, 100)
+            else:
+                color = (100, 220, 100)
+            line = tiny.render(
+                f"{sq['name']:<20} {sq['alive']:>3}/{sq['initial']:<4} {killed:>8} {sq['kills']:>8}",
+                True, color)
+            self.screen.blit(line, (col_left, y))
+            y += 18
+
+        y += 8
+        totals = small.render(
+            f"Survived: {total_survived}/{total_started}  |  Total Kills: {s['total_player_kills']}",
+            True, WHITE)
+        self.screen.blit(totals, (col_left, y))
+        y += 25
+
+        # Player generals
+        for g in s.get("player_generals", []):
+            status = "ALIVE" if g["alive"] else "FALLEN"
+            gcolor = GOLD if g["alive"] else (180, 60, 60)
+            gt = tiny.render(
+                f"General {g['name']} ({g['type']}) Lv{g['level']} - "
+                f"Kills:{g['kills']} Duels:{g['duels_won']} [{status}]",
+                True, gcolor)
+            self.screen.blit(gt, (col_left, y))
+            y += 18
+
+        # MVP
+        if s.get("mvp"):
+            y += 10
+            mvp = med.render(f"MVP: {s['mvp']}", True, GOLD)
+            self.screen.blit(mvp, (col_left, y))
+
+        # Right column - Enemy Army
+        y = 120
+        header2 = med.render("Enemy Forces", True, (255, 100, 100))
+        self.screen.blit(header2, (col_right, y))
+        y += 30
+
+        hdr2 = tiny.render(f"{'Unit':<20} {'Alive':>8} {'Killed':>8} {'Kills':>8}", True, (140, 140, 140))
+        self.screen.blit(hdr2, (col_right, y))
+        y += 5
+        pygame.draw.line(self.screen, (60, 60, 60), (col_right, y + 12), (col_right + col_w, y + 12))
+        y += 16
+
+        e_total_started = 0
+        e_total_survived = 0
+        for sq in s["enemy_squads"]:
+            killed = sq["initial"] - sq["alive"]
+            e_total_started += sq["initial"]
+            e_total_survived += sq["alive"]
+            if sq["alive"] == 0:
+                color = (180, 60, 60)
+            elif sq["alive"] < sq["initial"]:
+                color = (220, 200, 100)
+            else:
+                color = (100, 220, 100)
+            line = tiny.render(
+                f"{sq['name']:<20} {sq['alive']:>3}/{sq['initial']:<4} {killed:>8} {sq['kills']:>8}",
+                True, color)
+            self.screen.blit(line, (col_right, y))
+            y += 18
+
+        y += 8
+        e_totals = small.render(
+            f"Survived: {e_total_survived}/{e_total_started}  |  Total Kills: {s['total_enemy_kills']}",
+            True, WHITE)
+        self.screen.blit(e_totals, (col_right, y))
+        y += 25
+
+        for g in s.get("enemy_generals", []):
+            status = "ALIVE" if g["alive"] else "FALLEN"
+            gcolor = (200, 150, 100) if g["alive"] else (180, 60, 60)
+            gt = tiny.render(
+                f"General {g['name']} ({g['type']}) Lv{g['level']} - "
+                f"Kills:{g['kills']} Duels:{g['duels_won']} [{status}]",
+                True, gcolor)
+            self.screen.blit(gt, (col_right, y))
+            y += 18
+
+        # Loot
+        if s["loot_gold"] > 0:
+            y = max(y, SCREEN_HEIGHT - 140)
+            loot = med.render(f"Loot: +{s['loot_gold']} Gold", True, GOLD)
+            self.screen.blit(loot, (SCREEN_WIDTH // 2 - loot.get_width() // 2, SCREEN_HEIGHT - 120))
+
+        # Continue prompt
+        cont = med.render("Press ENTER to continue", True, WHITE)
+        if pygame.time.get_ticks() % 1000 < 700:
+            self.screen.blit(cont, (SCREEN_WIDTH // 2 - cont.get_width() // 2, SCREEN_HEIGHT - 60))
 
 
 if __name__ == "__main__":

@@ -60,6 +60,13 @@ class Squad:
         self.being_rear_charged = False
         self.is_braced = False
 
+        # Terrain modifiers (set each frame by battle scene)
+        self.terrain_mods = {
+            "speed_mult": 1.0, "ranged_accuracy_mult": 1.0,
+            "ranged_damage_mult": 1.0, "melee_defense_mult": 1.0,
+            "charge_mult": 1.0, "terrain_type": None,
+        }
+
         # Create soldiers in formation
         self.soldiers = []
         self._create_formation(unit_stats)
@@ -120,9 +127,10 @@ class Squad:
 
     @property
     def effective_speed(self):
-        """Speed reduced by exhaustion."""
+        """Speed reduced by exhaustion and terrain."""
         penalty = (self.exhaustion / EXHAUSTION_MAX) * EXHAUSTION_SPEED_PENALTY
-        return self.unit_stats.speed * (1.0 - penalty)
+        base = self.unit_stats.speed * (1.0 - penalty)
+        return base * self.terrain_mods.get("speed_mult", 1.0)
 
     def compute_flank_multiplier(self, attacker_squad):
         """Determine flank/rear bonus based on angle of attack."""
@@ -316,7 +324,8 @@ class Squad:
         self.target_x = tx
         self.target_y = ty
         self.facing_angle = angle_between(self.x, self.y, tx, ty)
-        speed_mult = 1.5 if self.is_cavalry else 1.2
+        charge_terrain = self.terrain_mods.get("charge_mult", 1.0)
+        speed_mult = (1.5 if self.is_cavalry else 1.2) * charge_terrain
         self._do_movement(speed_mult=speed_mult)
 
     def _handle_brace_impact(self):
@@ -352,6 +361,9 @@ class Squad:
         elif flank_mult >= FLANK_DAMAGE_BONUS:
             self.target_squad.being_flanked = True
 
+        # Terrain: defender gets melee defense bonus in forest
+        def_mult = self.target_squad.terrain_mods.get("melee_defense_mult", 1.0)
+
         for s in self.alive_soldiers:
             if s.attack_cooldown > 0:
                 continue
@@ -366,7 +378,8 @@ class Squad:
             if best:
                 if best_dist <= MELEE_RANGE:
                     dmg = s.attack(best, is_charging=is_charge,
-                                   flank_mult=flank_mult)
+                                   flank_mult=flank_mult,
+                                   defense_terrain_mult=def_mult)
                     if dmg > 0 and not best.alive:
                         self.kills += 1
                         self.target_squad.on_casualty()
@@ -391,13 +404,20 @@ class Squad:
             self.state = SquadState.FIGHTING
             return
         self.facing_angle = angle_between(self.x, self.y, tx, ty)
+        ranged_dmg_mult = self.terrain_mods.get("ranged_damage_mult", 1.0)
+        ranged_acc_mult = self.terrain_mods.get("ranged_accuracy_mult", 1.0)
+        # Target in forest also reduces accuracy
+        target_terrain = self.target_squad.terrain_mods.get("terrain_type")
+        if target_terrain == "forest":
+            ranged_acc_mult *= 0.8  # harder to hit targets in forest
         for s in self.alive_soldiers:
             if s.attack_cooldown > 0:
                 continue
             targets = self.target_squad.alive_soldiers
             if targets:
                 target = random.choice(targets)
-                dmg = s.ranged_attack(target)
+                dmg = s.ranged_attack(target, accuracy_mult=ranged_acc_mult,
+                                       damage_mult=ranged_dmg_mult)
                 if dmg > 0 and not target.alive:
                     self.kills += 1
                     self.target_squad.on_casualty()
@@ -526,6 +546,9 @@ class Squad:
                 label += " WAVERING"
             elif self.is_braced:
                 label += " BRACED"
+            terrain_type = self.terrain_mods.get("terrain_type")
+            if terrain_type:
+                label += f" [{terrain_type.upper()}]"
             text = font.render(label, True, light_color)
             surface.blit(text, (scx - text.get_width() // 2, ex_bar_y - bar_h - 12))
 

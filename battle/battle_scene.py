@@ -8,6 +8,8 @@ from core.settings import (
     TEAM_COLORS, TEAM_COLORS_LIGHT, GREEN, DARK_GREEN, SAND, BROWN,
     BLACK, WHITE, GREY, GOLD, YELLOW, ORANGE,
     EXHAUSTION_MAX,
+    HILL_RANGED_BONUS, HILL_CHARGE_DOWNHILL_BONUS, HILL_SPEED_UPHILL_PENALTY,
+    FOREST_CAVALRY_SPEED_MULT, FOREST_RANGED_ACCURACY_MULT, FOREST_MELEE_DEFENSE_BONUS,
 )
 from core.camera import Camera
 from core.utils import distance, point_in_rect
@@ -32,6 +34,7 @@ class BattleScene:
         self.enemy_generals = []
         self.all_squads = []
         self.all_generals = []
+        self._dead_generals = []
 
         self.result = BattleResult.ONGOING
         self.selected_squads = []
@@ -61,6 +64,37 @@ class BattleScene:
         self.terrain.append({"type": "forest", "rect": (1800, 400, 300, 350), "color": (30, 90, 20)})
         self.terrain.append({"type": "hill", "rect": (1200, 1200, 350, 180), "color": (80, 140, 60)})
         self.terrain.append({"type": "forest", "rect": (500, 1100, 250, 300), "color": (30, 90, 20)})
+
+    def get_terrain_at(self, x, y):
+        """Return terrain type at given world position, or None."""
+        for t in self.terrain:
+            rx, ry, rw, rh = t["rect"]
+            if rx <= x <= rx + rw and ry <= y <= ry + rh:
+                return t["type"]
+        return None
+
+    def get_terrain_modifiers(self, squad):
+        """Compute terrain modifiers for a squad based on its position."""
+        cx, cy = squad.center
+        terrain_type = self.get_terrain_at(cx, cy)
+        mods = {
+            "speed_mult": 1.0,
+            "ranged_accuracy_mult": 1.0,
+            "ranged_damage_mult": 1.0,
+            "melee_defense_mult": 1.0,
+            "charge_mult": 1.0,
+            "terrain_type": terrain_type,
+        }
+        if terrain_type == "hill":
+            mods["ranged_damage_mult"] = HILL_RANGED_BONUS
+            mods["charge_mult"] = HILL_CHARGE_DOWNHILL_BONUS
+            mods["speed_mult"] = HILL_SPEED_UPHILL_PENALTY  # penalty for enemies moving onto hill
+        elif terrain_type == "forest":
+            if squad.is_cavalry:
+                mods["speed_mult"] = FOREST_CAVALRY_SPEED_MULT
+            mods["ranged_accuracy_mult"] = FOREST_RANGED_ACCURACY_MULT
+            mods["melee_defense_mult"] = FOREST_MELEE_DEFENSE_BONUS
+        return mods
 
     def _deploy_armies(self, player_army, enemy_army):
         start_x = 300
@@ -249,6 +283,7 @@ class BattleScene:
 
     def _tick(self):
         for sq in self.all_squads:
+            sq.terrain_mods = self.get_terrain_modifiers(sq)
             sq.update(self.all_squads)
 
         for g in self.player_generals:
@@ -278,6 +313,7 @@ class BattleScene:
             else:
                 g.on_death(self.enemy_squads)
             self.all_generals.remove(g)
+            self._dead_generals.append(g)
 
         self.selected_squads = [s for s in self.selected_squads if not s.is_destroyed]
 

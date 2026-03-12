@@ -62,7 +62,8 @@ class Soldier:
             self.alive = False
         return damage
 
-    def attack(self, target_soldier, is_charging=False, flank_mult=1.0):
+    def attack(self, target_soldier, is_charging=False, flank_mult=1.0,
+               defense_terrain_mult=1.0):
         """Melee attack using weapon_strength and armor_penetration."""
         if self.attack_cooldown > 0:
             return 0
@@ -74,7 +75,8 @@ class Soldier:
 
         # Attack skill vs defense skill determines hit quality
         attack_roll = self.stats.melee_attack * random.uniform(0.7, 1.3)
-        defense_roll = target_soldier.stats.melee_defense * random.uniform(0.6, 1.0)
+        defense_roll = (target_soldier.stats.melee_defense *
+                        random.uniform(0.6, 1.0) * defense_terrain_mult)
         hit_quality = max(0.5, attack_roll / max(1, defense_roll))
 
         # Final damage = weapon strength * hit quality * flank bonus
@@ -84,7 +86,7 @@ class Soldier:
         self.attack_cooldown = self.effective_cooldown(30)
         return actual
 
-    def ranged_attack(self, target_soldier):
+    def ranged_attack(self, target_soldier, accuracy_mult=1.0, damage_mult=1.0):
         """Ranged attack using ranged_strength and ranged_armor_penetration."""
         if self.attack_cooldown > 0 or self.stats.ranged_attack == 0:
             return 0
@@ -93,9 +95,10 @@ class Soldier:
         if dist > self.stats.range_distance:
             return 0
 
-        # Accuracy falls off with distance, worsened by exhaustion
+        # Accuracy falls off with distance, worsened by exhaustion, modified by terrain
         exhaust_acc_penalty = self.get_exhaustion_factor() * 0.15
         accuracy = max(0.2, 1.0 - (dist / self.stats.range_distance) * 0.6 - exhaust_acc_penalty)
+        accuracy *= accuracy_mult
         if random.random() > accuracy:
             self.attack_cooldown = self.effective_cooldown(60)
             return 0  # miss
@@ -105,6 +108,7 @@ class Soldier:
         # Ranged skill modulates damage
         skill_mult = self.stats.ranged_attack / 15.0  # normalized around 1.0
         damage *= max(0.5, skill_mult)
+        damage *= damage_mult  # terrain bonus
 
         actual = target_soldier.take_damage(damage, self.stats.ranged_armor_penetration)
         self.attack_cooldown = self.effective_cooldown(60)

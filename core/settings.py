@@ -91,6 +91,14 @@ EXHAUSTION_SPEED_PENALTY = 0.3      # max speed reduction at full exhaustion
 EXHAUSTION_DAMAGE_PENALTY = 0.25    # max damage reduction at full exhaustion
 EXHAUSTION_COOLDOWN_PENALTY = 0.4   # max attack cooldown increase at full exhaustion
 
+# Terrain Effects
+HILL_RANGED_BONUS = 1.15          # +15% ranged damage from hill
+HILL_CHARGE_DOWNHILL_BONUS = 1.20 # +20% charge bonus going downhill
+HILL_SPEED_UPHILL_PENALTY = 0.90  # -10% speed going uphill
+FOREST_CAVALRY_SPEED_MULT = 0.50  # -50% cavalry speed in forest
+FOREST_RANGED_ACCURACY_MULT = 0.70# -30% ranged accuracy into/out of forest
+FOREST_MELEE_DEFENSE_BONUS = 1.15 # +15% melee defense in forest
+
 # Spear Bracing
 BRACE_CHARGE_DAMAGE_MULT = 2.5     # damage dealt to charging cavalry
 BRACE_CHARGE_MORALE_SHOCK = 10     # morale hit to cavalry that charges braced spears
