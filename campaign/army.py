@@ -18,12 +18,42 @@ from data.unit_types import (
 class CampaignSquad:
     """A squad on the campaign map with mutable soldier count and veterancy."""
 
+    # Veterancy ranks: (name, min_battles, atk_mult, def_mult, morale_bonus, exhaustion_mult)
+    VETERANCY_RANKS = [
+        ("Raw",       0,  1.0,  1.0,  0,  1.0),
+        ("Trained",   1,  1.05, 1.05, 0,  1.0),
+        ("Veteran",   3,  1.10, 1.10, 5,  1.0),
+        ("Elite",     6,  1.15, 1.15, 10, 0.9),
+        ("Legendary", 10, 1.25, 1.25, 15, 0.8),
+    ]
+
     def __init__(self, unit_stats, current_count=None):
         self.unit_stats = unit_stats
         self.max_count = unit_stats.squad_size
         self.current_count = current_count if current_count is not None else self.max_count
         self.battles_survived = 0
         self.total_kills = 0
+
+    @property
+    def veterancy_rank(self):
+        """Return (name, atk_mult, def_mult, morale_bonus, exhaustion_mult)."""
+        rank = self.VETERANCY_RANKS[0]
+        for r in self.VETERANCY_RANKS:
+            if self.battles_survived >= r[1]:
+                rank = r
+        return rank
+
+    @property
+    def rank_name(self):
+        return self.veterancy_rank[0]
+
+    @property
+    def rank_index(self):
+        """0-4 index for chevron display."""
+        for i, r in enumerate(self.VETERANCY_RANKS):
+            if self.battles_survived < r[1]:
+                return max(0, i - 1)
+        return len(self.VETERANCY_RANKS) - 1
 
     @property
     def is_understrength(self):
@@ -118,7 +148,16 @@ class Army:
         squad_list = []
         for sq in self.squads:
             if sq.current_count > 0:
-                squad_list.append((sq.unit_stats, sq.current_count))
+                rank = sq.veterancy_rank
+                vet_data = {
+                    "rank_name": rank[0],
+                    "rank_index": sq.rank_index,
+                    "atk_mult": rank[2],
+                    "def_mult": rank[3],
+                    "morale_bonus": rank[4],
+                    "exhaustion_mult": rank[5],
+                }
+                squad_list.append((sq.unit_stats, sq.current_count, vet_data))
         return {
             "squads": squad_list,
             "general": {
@@ -198,13 +237,12 @@ class Army:
             (small_font, "--- Squads ---", (180, 180, 180)),
         ]
         for sq in self.squads:
-            status = ""
-            if sq.is_understrength:
-                status = f" [Wounded {sq.current_count}/{sq.max_count}]"
-            elif sq.battles_survived > 0:
-                status = f" [Vet x{sq.battles_survived}]"
+            chevrons = ">" * sq.rank_index if sq.rank_index > 0 else ""
+            wound = f" [{sq.current_count}/{sq.max_count}]" if sq.is_understrength else ""
+            rank = f" [{sq.rank_name}]" if sq.battles_survived > 0 else ""
             texts.append((small_font,
-                          f"  {sq.unit_stats.name} ({sq.current_count}) K:{sq.total_kills}{status}",
+                          f"  {chevrons}{sq.unit_stats.name} ({sq.current_count})"
+                          f" K:{sq.total_kills}{rank}{wound}",
                           WHITE))
 
         for fnt, text, color in texts:

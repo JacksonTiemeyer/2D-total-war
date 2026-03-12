@@ -51,7 +51,8 @@ class SquadState:
 
 
 class Squad:
-    def __init__(self, unit_stats, team, x, y, facing_angle=0.0, soldier_count=None):
+    def __init__(self, unit_stats, team, x, y, facing_angle=0.0, soldier_count=None,
+                 vet_data=None):
         self.unit_stats = unit_stats
         self.team = team
         self.x = x
@@ -60,7 +61,7 @@ class Squad:
         self.target_x = x
         self.target_y = y
         self.state = SquadState.IDLE
-        self.morale = 100.0
+        self.morale = 100.0  # vet morale bonus applied after vet_data is set
         self.selected = False
         self.target_squad = None
         self.is_cavalry = unit_stats.speed >= 3.5
@@ -70,6 +71,15 @@ class Squad:
         self.charging = False
         self.charge_timer = 0
         self.formation = Formation.LINE
+
+        # Veterancy modifiers
+        self.vet_data = vet_data or {}
+        self.vet_atk_mult = self.vet_data.get("atk_mult", 1.0)
+        self.vet_def_mult = self.vet_data.get("def_mult", 1.0)
+        self.vet_morale_bonus = self.vet_data.get("morale_bonus", 0)
+        self.vet_exhaustion_mult = self.vet_data.get("exhaustion_mult", 1.0)
+        self.vet_rank_name = self.vet_data.get("rank_name", "Raw")
+        self.vet_rank_index = self.vet_data.get("rank_index", 0)
 
         # Exhaustion
         self.exhaustion = 0.0
@@ -362,8 +372,8 @@ class Squad:
         elif self.state == SquadState.BROKEN or self.state == SquadState.ROUTED:
             rate = EXHAUSTION_CHARGE_RATE  # fleeing is tiring
 
-        # Apply unit-specific exhaustion rate multiplier
-        rate *= self.unit_stats.exhaustion_rate
+        # Apply unit-specific exhaustion rate multiplier and veterancy
+        rate *= self.unit_stats.exhaustion_rate * self.vet_exhaustion_mult
 
         self.exhaustion = min(EXHAUSTION_MAX, self.exhaustion + rate)
 
@@ -475,9 +485,11 @@ class Squad:
                     best = es
             if best:
                 if best_dist <= MELEE_RANGE:
+                    vet_flank = flank_mult * self.vet_atk_mult
+                    vet_def = def_mult * self.target_squad.vet_def_mult
                     dmg = s.attack(best, is_charging=is_charge,
-                                   flank_mult=flank_mult,
-                                   defense_terrain_mult=def_mult)
+                                   flank_mult=vet_flank,
+                                   defense_terrain_mult=vet_def)
                     if dmg > 0 and not best.alive:
                         self.kills += 1
                         self.target_squad.on_casualty()
@@ -502,7 +514,7 @@ class Squad:
             self.state = SquadState.FIGHTING
             return
         self.facing_angle = angle_between(self.x, self.y, tx, ty)
-        ranged_dmg_mult = self.terrain_mods.get("ranged_damage_mult", 1.0)
+        ranged_dmg_mult = self.terrain_mods.get("ranged_damage_mult", 1.0) * self.vet_atk_mult
         ranged_acc_mult = self.terrain_mods.get("ranged_accuracy_mult", 1.0)
         # Target in forest also reduces accuracy
         target_terrain = self.target_squad.terrain_mods.get("terrain_type")
@@ -642,7 +654,8 @@ class Squad:
         # Squad name and count
         if camera.zoom > 0.5:
             font = pygame.font.SysFont(None, max(12, camera.scale(14)))
-            label = f"{self.unit_stats.name} ({self.alive_count})"
+            chevrons = ">" * self.vet_rank_index if self.vet_rank_index > 0 else ""
+            label = f"{chevrons}{self.unit_stats.name} ({self.alive_count})"
             if self.state == SquadState.ROUTED:
                 label += " ROUTED!"
             elif self.state == SquadState.BROKEN:

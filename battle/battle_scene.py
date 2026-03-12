@@ -175,10 +175,13 @@ class BattleScene:
         start_y = BATTLE_MAP_HEIGHT // 2 - 300
         spacing_y = 80
 
-        for i, (unit_stats, soldier_count) in enumerate(player_army.get("squads", [])):
+        for i, squad_entry in enumerate(player_army.get("squads", [])):
+            unit_stats, soldier_count = squad_entry[0], squad_entry[1]
+            vet_data = squad_entry[2] if len(squad_entry) > 2 else None
             y = start_y + i * spacing_y
             squad = Squad(unit_stats, 0, start_x, y, facing_angle=0,
-                          soldier_count=soldier_count if soldier_count != 1 else None)
+                          soldier_count=soldier_count if soldier_count != 1 else None,
+                          vet_data=vet_data)
             self.player_squads.append(squad)
 
         gen_data = player_army.get("general")
@@ -192,10 +195,13 @@ class BattleScene:
 
         start_x = BATTLE_MAP_WIDTH - 300
         start_y = BATTLE_MAP_HEIGHT // 2 - 300
-        for i, (unit_stats, soldier_count) in enumerate(enemy_army.get("squads", [])):
+        for i, squad_entry in enumerate(enemy_army.get("squads", [])):
+            unit_stats, soldier_count = squad_entry[0], squad_entry[1]
+            vet_data = squad_entry[2] if len(squad_entry) > 2 else None
             y = start_y + i * spacing_y
             squad = Squad(unit_stats, 1, start_x, y, facing_angle=math.pi,
-                          soldier_count=soldier_count if soldier_count != 1 else None)
+                          soldier_count=soldier_count if soldier_count != 1 else None,
+                          vet_data=vet_data)
             self.enemy_squads.append(squad)
 
         gen_data = enemy_army.get("general")
