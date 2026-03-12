@@ -87,6 +87,13 @@ class Game:
             if event.key == pygame.K_RETURN or event.key == pygame.K_SPACE:
                 self.campaign = CampaignScene()
                 self.state = GameState.CAMPAIGN
+            elif event.key == pygame.K_c:
+                # Continue from save
+                from core.save_system import load_campaign, restore_campaign_scene
+                data = load_campaign()
+                if data:
+                    self.campaign = restore_campaign_scene(data)
+                    self.state = GameState.CAMPAIGN
             elif event.key == pygame.K_s:
                 # Skirmish mode
                 from battle.skirmish_setup import SkirmishSetup
@@ -276,15 +283,21 @@ class Game:
             y += 28
 
         # Start prompts
-        prompt = font.render("[ENTER] Campaign Mode", True, WHITE)
+        prompt = font.render("[ENTER] New Campaign", True, WHITE)
         if pygame.time.get_ticks() % 1000 < 700:
-            self.screen.blit(prompt, (SCREEN_WIDTH // 2 - prompt.get_width() // 2, 480))
+            self.screen.blit(prompt, (SCREEN_WIDTH // 2 - prompt.get_width() // 2, 460))
+
+        # Continue option (only if save exists)
+        from core.save_system import save_exists
+        if save_exists():
+            cont = font.render("[C] Continue Campaign", True, (100, 255, 100))
+            self.screen.blit(cont, (SCREEN_WIDTH // 2 - cont.get_width() // 2, 500))
 
         skirmish = font.render("[S] Skirmish Mode", True, (180, 200, 255))
-        self.screen.blit(skirmish, (SCREEN_WIDTH // 2 - skirmish.get_width() // 2, 520))
+        self.screen.blit(skirmish, (SCREEN_WIDTH // 2 - skirmish.get_width() // 2, 540))
 
         controls = small.render("ESC to quit", True, (100, 100, 100))
-        self.screen.blit(controls, (SCREEN_WIDTH // 2 - controls.get_width() // 2, 570))
+        self.screen.blit(controls, (SCREEN_WIDTH // 2 - controls.get_width() // 2, 590))
 
     def _draw_pre_battle(self):
         self.screen.fill((30, 25, 20))

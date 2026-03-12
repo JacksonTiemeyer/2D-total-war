@@ -96,6 +96,8 @@ class CampaignScene:
             elif event.key == pygame.K_g:
                 # Cycle general type
                 self._cycle_general()
+            elif event.key == pygame.K_s and (pygame.key.get_mods() & pygame.KMOD_CTRL):
+                self._save_game()
 
         if event.type == pygame.MOUSEBUTTONDOWN:
             if event.button == 1:
@@ -252,9 +254,17 @@ class CampaignScene:
                         if army.army_strength > s.garrison_strength:
                             s.owner = army.team
 
+    def _save_game(self):
+        from core.save_system import save_campaign
+        save_campaign(self)
+        self._save_notification_timer = 120  # show "Saved!" for 2 seconds
+
     def update(self):
         self.camera.update()
         self.player_army.update()
+        # Tick save notification
+        if hasattr(self, '_save_notification_timer') and self._save_notification_timer > 0:
+            self._save_notification_timer -= 1
 
         # Check for collisions with enemy armies -> trigger battle
         for army in self.armies:
@@ -367,9 +377,14 @@ class CampaignScene:
 
         # Controls
         ctrl_text = small_font.render(
-            "[RMB] Move Army  [R] Recruit (near town)  [G] Cycle General  [ENTER] End Turn",
+            "[RMB] Move Army  [R] Recruit  [G] Cycle General  [Ctrl+S] Save  [ENTER] End Turn",
             True, (180, 180, 180))
         surface.blit(ctrl_text, (10, SCREEN_HEIGHT - 30))
+
+        # Save notification
+        if hasattr(self, '_save_notification_timer') and self._save_notification_timer > 0:
+            save_text = font.render("Game Saved!", True, (100, 255, 100))
+            surface.blit(save_text, (SCREEN_WIDTH // 2 - save_text.get_width() // 2, 45))
 
         # End turn button
         btn_rect = (SCREEN_WIDTH - 120, SCREEN_HEIGHT - 36, 110, 32)
