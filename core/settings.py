@@ -32,10 +32,16 @@ GOLD = (255, 215, 0)
 TEAM_COLORS = {
     0: BLUE,
     1: RED,
+    2: (40, 160, 40),     # Forest Alliance - green
+    3: (200, 140, 40),    # Desert Raiders - orange
+    None: GREY,
 }
 TEAM_COLORS_LIGHT = {
     0: LIGHT_BLUE,
     1: (220, 100, 100),
+    2: (120, 220, 120),
+    3: (240, 200, 100),
+    None: (180, 180, 180),
 }
 
 # Battle map

@@ -18,6 +18,8 @@ from campaign.army import (
     Army, create_default_player_army, create_enemy_army,
 )
 from data.unit_types import ALL_RECRUITABLE, GENERAL_ROSTER
+from campaign.faction import FACTION_ROSTER
+from campaign.diplomacy import DiplomacyManager, DiplomacyState
 
 
 class CampaignScene:
@@ -31,8 +33,15 @@ class CampaignScene:
         self.settlements = []
         self.selected_settlement = None
         self.show_recruitment = False
+        self.show_diplomacy = False
         self.recruitment_settlement = None
         self.pending_battle = None  # (player_army, enemy_army) tuple
+
+        # Faction & diplomacy
+        self.factions = FACTION_ROSTER[:]
+        self.diplomacy = DiplomacyManager(self.factions)
+        # Start player at war with Iron Empire (team 1)
+        self.diplomacy.declare_war(0, 1)
 
         self._generate_world()
 
@@ -40,50 +49,54 @@ class CampaignScene:
         """Generate a Warband-style campaign map with settlements and enemies."""
         # Settlements
         settlement_data = [
+            # Player (team 0)
             ("Ironhold", 300, 300, SettlementType.CASTLE, 0),
             ("Millbrook", 600, 200, SettlementType.VILLAGE, 0),
             ("King's Landing", 500, 600, SettlementType.TOWN, 0),
-            ("Redwall", 1100, 400, SettlementType.CASTLE, None),
-            ("Greenfield", 900, 700, SettlementType.TOWN, None),
-            ("Dusthaven", 1400, 300, SettlementType.TOWN, None),
+            ("Brightwater", 400, 1100, SettlementType.TOWN, 0),
+            # Iron Empire (team 1)
             ("Thornkeep", 1600, 600, SettlementType.CASTLE, 1),
             ("Ashvale", 1800, 400, SettlementType.VILLAGE, 1),
             ("Blackspire", 2000, 700, SettlementType.TOWN, 1),
-            ("Willowmere", 800, 1000, SettlementType.VILLAGE, None),
-            ("Stormwatch", 1200, 900, SettlementType.CASTLE, None),
-            ("Brightwater", 400, 1100, SettlementType.TOWN, 0),
-            ("Shadowfen", 1600, 1000, SettlementType.VILLAGE, 1),
             ("Dragonrest", 1900, 1100, SettlementType.CASTLE, 1),
+            # Forest Alliance (team 2)
+            ("Greenfield", 900, 700, SettlementType.TOWN, 2),
+            ("Willowmere", 800, 1000, SettlementType.VILLAGE, 2),
+            ("Stormwatch", 1200, 900, SettlementType.CASTLE, 2),
+            # Contested / Desert Raiders (team 3)
+            ("Dusthaven", 1400, 300, SettlementType.TOWN, 3),
+            ("Shadowfen", 1600, 1000, SettlementType.VILLAGE, 3),
+            # Neutral
+            ("Redwall", 1100, 400, SettlementType.CASTLE, None),
             ("Crossroads", 1000, 600, SettlementType.VILLAGE, None),
         ]
         for name, x, y, stype, owner in settlement_data:
             self.settlements.append(Settlement(name, x, y, owner, stype))
 
-        # Enemy armies
-        enemy_names = [
-            "Lord Varro's Host", "The Iron Band", "Ser Aldric's Company",
-            "The Red Wolves", "Baron Thorne's Guard",
-        ]
-        enemy_positions = [
-            (1500, 500), (1800, 300), (1700, 800),
-            (1300, 700), (2000, 500),
-        ]
-        for i, (name, (x, y)) in enumerate(zip(enemy_names, enemy_positions)):
-            difficulty = random.randint(1, 3)
-            army = create_enemy_army(name, 1, x, y, difficulty)
+        # Iron Empire armies (team 1)
+        for name, x, y in [("Lord Varro's Host", 1500, 500),
+                            ("The Iron Band", 1800, 300),
+                            ("Baron Thorne's Guard", 2000, 500)]:
+            army = create_enemy_army(name, 1, x, y, random.randint(2, 3))
             self.armies.append(army)
 
-        # A couple neutral/bandit armies
-        bandit_names = ["Bandit Raiders", "Rogue Mercenaries"]
-        for i, name in enumerate(bandit_names):
-            x = random.randint(600, 1400)
-            y = random.randint(400, 1000)
-            army = create_enemy_army(name, 1, x, y, difficulty=1)
+        # Forest Alliance armies (team 2)
+        for name, x, y in [("Ser Aldric's Company", 900, 800),
+                            ("The Green Wardens", 1100, 950)]:
+            army = create_enemy_army(name, 2, x, y, random.randint(1, 2))
+            self.armies.append(army)
+
+        # Desert Raiders armies (team 3)
+        for name, x, y in [("The Red Wolves", 1400, 350),
+                            ("Sand Vipers", 1550, 1050)]:
+            army = create_enemy_army(name, 3, x, y, random.randint(1, 3))
             self.armies.append(army)
 
     def handle_event(self, event):
         if self.show_recruitment:
             return self._handle_recruitment_event(event)
+        if self.show_diplomacy:
+            return self._handle_diplomacy_event(event)
 
         self.camera.handle_event(event)
 
@@ -96,6 +109,8 @@ class CampaignScene:
             elif event.key == pygame.K_g:
                 # Cycle general type
                 self._cycle_general()
+            elif event.key == pygame.K_d:
+                self.show_diplomacy = True
             elif event.key == pygame.K_s and (pygame.key.get_mods() & pygame.KMOD_CTRL):
                 self._save_game()
 
@@ -210,6 +225,30 @@ class CampaignScene:
         idx = (idx + 1) % len(GENERAL_ROSTER)
         self.player_army.general_stats = GENERAL_ROSTER[idx]
 
+    def _handle_diplomacy_event(self, event):
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_ESCAPE:
+                self.show_diplomacy = False
+                return None
+            # Number keys to interact with factions
+            if pygame.K_1 <= event.key <= pygame.K_9:
+                idx = event.key - pygame.K_1
+                non_player = [f for f in self.factions if not f.is_player]
+                if idx < len(non_player):
+                    target = non_player[idx]
+                    state = self.diplomacy.get_state(0, target.team)
+                    if state == DiplomacyState.WAR:
+                        # Try peace
+                        if self.diplomacy.propose_peace(0, target.team):
+                            pass  # peace accepted
+                    elif state in (DiplomacyState.FRIENDLY,):
+                        # Try alliance
+                        self.diplomacy.propose_alliance(0, target.team)
+                    elif state in (DiplomacyState.NEUTRAL, DiplomacyState.HOSTILE):
+                        # Declare war
+                        self.diplomacy.declare_war(0, target.team)
+        return None
+
     def _end_turn(self):
         self.turn += 1
 
@@ -225,20 +264,31 @@ class CampaignScene:
         for s in self.settlements:
             s.refresh_recruits()
 
-        # Move enemy armies (simple AI)
+        # AI diplomacy
+        for f in self.factions:
+            if not f.is_player:
+                self.diplomacy.ai_diplomacy_tick(f, self.factions)
+
+        # Move enemy armies (faction-aware AI)
         for army in self.armies:
             if army.is_player:
                 continue
-            # Random patrol or move toward player
-            if random.random() < 0.4:
+            # Find enemies of this army's faction
+            enemies = [a for a in self.armies
+                       if a.team != army.team and
+                       self.diplomacy.are_at_war(army.team, a.team)]
+            if enemies and random.random() < 0.6:
+                # Move toward nearest enemy
+                nearest = min(enemies, key=lambda e: distance(army.x, army.y, e.x, e.y))
+                army.give_move_order(
+                    nearest.x + random.randint(-50, 50),
+                    nearest.y + random.randint(-50, 50),
+                )
+            else:
+                # Patrol
                 army.give_move_order(
                     army.x + random.randint(-100, 100),
                     army.y + random.randint(-100, 100),
-                )
-            else:
-                army.give_move_order(
-                    self.player_army.x + random.randint(-150, 150),
-                    self.player_army.y + random.randint(-150, 150),
                 )
 
         # Move all armies
@@ -246,13 +296,50 @@ class CampaignScene:
             for army in self.armies:
                 army.update()
 
+        # AI army battles (auto-resolve)
+        self._resolve_ai_battles()
+
         # Capture unowned/enemy settlements when nearby
         for s in self.settlements:
             for army in self.armies:
                 if distance(army.x, army.y, s.x, s.y) < 40:
                     if s.owner != army.team:
-                        if army.army_strength > s.garrison_strength:
-                            s.owner = army.team
+                        if self.diplomacy.are_at_war(army.team, s.owner if s.owner is not None else -1):
+                            if army.army_strength > s.garrison_strength:
+                                s.owner = army.team
+
+    def _resolve_ai_battles(self):
+        """Auto-resolve battles between AI armies that collide."""
+        to_remove = []
+        checked = set()
+        for a1 in self.armies:
+            if a1.is_player or a1 in to_remove:
+                continue
+            for a2 in self.armies:
+                if a2.is_player or a2 is a1 or a2 in to_remove:
+                    continue
+                pair = (id(a1), id(a2))
+                if pair in checked or (id(a2), id(a1)) in checked:
+                    continue
+                checked.add(pair)
+                if (a1.team != a2.team and
+                        self.diplomacy.are_at_war(a1.team, a2.team) and
+                        distance(a1.x, a1.y, a2.x, a2.y) < 30):
+                    # Auto-resolve: stronger army wins, both take losses
+                    if a1.army_strength >= a2.army_strength:
+                        # a1 wins - lose 20-40% soldiers
+                        for sq in a1.squads:
+                            loss = int(sq.current_count * random.uniform(0.1, 0.3))
+                            sq.current_count = max(1, sq.current_count - loss)
+                        to_remove.append(a2)
+                    else:
+                        for sq in a2.squads:
+                            loss = int(sq.current_count * random.uniform(0.1, 0.3))
+                            sq.current_count = max(1, sq.current_count - loss)
+                        to_remove.append(a1)
+        for army in to_remove:
+            if army in self.armies:
+                self.armies.remove(army)
 
     def _save_game(self):
         from core.save_system import save_campaign
@@ -268,9 +355,11 @@ class CampaignScene:
         if hasattr(self, '_save_notification_timer') and self._save_notification_timer > 0:
             self._save_notification_timer -= 1
 
-        # Check for collisions with enemy armies -> trigger battle
+        # Check for collisions with enemy armies -> trigger battle (only if at war)
         for army in self.armies:
             if army.is_player or army.team == 0:
+                continue
+            if not self.diplomacy.are_at_war(0, army.team):
                 continue
             if distance(self.player_army.x, self.player_army.y,
                         army.x, army.y) < 25:
@@ -321,6 +410,10 @@ class CampaignScene:
         # Recruitment overlay
         if self.show_recruitment:
             self._draw_recruitment(surface)
+
+        # Diplomacy overlay
+        if self.show_diplomacy:
+            self._draw_diplomacy(surface)
 
     def _draw_terrain(self, surface):
         """Draw decorative terrain features."""
@@ -379,7 +472,7 @@ class CampaignScene:
 
         # Controls
         ctrl_text = small_font.render(
-            "[RMB] Move Army  [R] Recruit  [G] Cycle General  [Ctrl+S] Save  [ENTER] End Turn",
+            "[RMB] Move  [R] Recruit  [G] General  [D] Diplomacy  [Ctrl+S] Save  [ENTER] End Turn",
             True, (180, 180, 180))
         surface.blit(ctrl_text, (10, SCREEN_HEIGHT - 30))
 
@@ -424,7 +517,10 @@ class CampaignScene:
         name_text = font.render(f"{s.name} ({s.settlement_type.title()})", True, WHITE)
         surface.blit(name_text, (x, y))
         y += 22
-        owner = "Yours" if s.owner == 0 else ("Enemy" if s.owner == 1 else "Neutral")
+        faction_names = {f.team: f.name for f in self.factions}
+        owner = faction_names.get(s.owner, "Neutral") if s.owner is not None else "Neutral"
+        if s.owner == 0:
+            owner = "Yours"
         owner_text = small_font.render(f"Owner: {owner}", True, WHITE)
         surface.blit(owner_text, (x, y))
         y += 18
@@ -509,3 +605,79 @@ class CampaignScene:
         footer = small.render("[ESC] Close  |  Click unit to recruit  |  Click 'Drop' to disband",
                               True, (150, 150, 150))
         surface.blit(footer, (panel_x + 10, panel_y + panel_h - 25))
+
+    def _draw_diplomacy(self, surface):
+        """Draw diplomacy overview panel."""
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 140))
+        surface.blit(overlay, (0, 0))
+
+        panel_w, panel_h = 500, 400
+        panel_x = SCREEN_WIDTH // 2 - panel_w // 2
+        panel_y = 100
+        pygame.draw.rect(surface, (30, 30, 40), (panel_x, panel_y, panel_w, panel_h))
+        pygame.draw.rect(surface, GOLD, (panel_x, panel_y, panel_w, panel_h), 2)
+
+        font = pygame.font.SysFont(None, 28)
+        small = pygame.font.SysFont(None, 20)
+        tiny = pygame.font.SysFont(None, 16)
+
+        title = font.render("Diplomacy", True, GOLD)
+        surface.blit(title, (panel_x + panel_w // 2 - title.get_width() // 2, panel_y + 10))
+
+        y = panel_y + 50
+        non_player = [f for f in self.factions if not f.is_player]
+
+        state_colors = {
+            DiplomacyState.WAR: (220, 50, 50),
+            DiplomacyState.HOSTILE: (200, 130, 50),
+            DiplomacyState.NEUTRAL: (180, 180, 180),
+            DiplomacyState.FRIENDLY: (100, 200, 100),
+            DiplomacyState.ALLIED: (50, 150, 255),
+        }
+
+        for i, faction in enumerate(non_player):
+            rel = self.diplomacy.get_relation(0, faction.team)
+            state = self.diplomacy.get_state(0, faction.team)
+            color = state_colors.get(state, WHITE)
+
+            # Faction name and relation
+            team_color = TEAM_COLORS.get(faction.team, GREY)
+            name_text = small.render(f"[{i+1}] {faction.name}", True, team_color)
+            surface.blit(name_text, (panel_x + 20, y))
+
+            # State
+            state_text = small.render(f"{state.upper()} ({rel:+d})", True, color)
+            surface.blit(state_text, (panel_x + 250, y))
+
+            # Personality
+            pers = tiny.render(f"({faction.personality})", True, (120, 120, 120))
+            surface.blit(pers, (panel_x + 400, y + 2))
+
+            y += 22
+
+            # Action hint
+            if state == DiplomacyState.WAR:
+                hint = tiny.render(f"  Press [{i+1}] to propose peace", True, (150, 150, 150))
+            elif state == DiplomacyState.FRIENDLY:
+                hint = tiny.render(f"  Press [{i+1}] to propose alliance", True, (150, 150, 150))
+            elif state in (DiplomacyState.NEUTRAL, DiplomacyState.HOSTILE):
+                hint = tiny.render(f"  Press [{i+1}] to declare war", True, (150, 150, 150))
+            else:
+                hint = tiny.render(f"  Allied", True, (100, 200, 255))
+            surface.blit(hint, (panel_x + 30, y))
+            y += 22
+
+            # Settlements owned
+            owned = sum(1 for s in self.settlements if s.owner == faction.team)
+            armies_count = sum(1 for a in self.armies if a.team == faction.team)
+            info = tiny.render(
+                f"  Settlements: {owned}  |  Armies: {armies_count}",
+                True, (140, 140, 140))
+            surface.blit(info, (panel_x + 30, y))
+            y += 30
+
+        # Footer
+        footer = tiny.render("[ESC] Close  |  Press number to interact", True, (150, 150, 150))
+        surface.blit(footer, (panel_x + panel_w // 2 - footer.get_width() // 2,
+                              panel_y + panel_h - 25))
