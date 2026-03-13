@@ -655,7 +655,7 @@ class Squad:
 
     def _skirmish_retreat(self, all_squads):
         """Ranged units in skirmish stance retreat from approaching enemies."""
-        flee_distance = self.unit_stats.range_distance * 0.4
+        flee_distance = self.unit_stats.range_distance * 0.7
         closest_enemy = None
         closest_dist = float('inf')
         for sq in all_squads:
@@ -933,10 +933,29 @@ class Squad:
                 pygame.draw.line(surface, (200, 200, 255),
                                  (int(ax), int(ay)), (int(hx), int(hy)), 2)
 
-        # Range circle for ranged units (when selected)
+        # Range indicator for ranged units (when selected)
         if self.selected and self.is_ranged:
             r = camera.scale(self.unit_stats.range_distance)
-            range_surf = pygame.Surface((r * 2, r * 2), pygame.SRCALPHA)
-            pygame.draw.circle(range_surf, (*light_color, 40), (r, r), r)
-            pygame.draw.circle(range_surf, (*light_color, 80), (r, r), r, 1)
-            surface.blit(range_surf, (scx - r, scy - r))
+            if self.unit_stats.can_fire_while_moving:
+                # Circle range for units that can fire while moving
+                range_surf = pygame.Surface((r * 2, r * 2), pygame.SRCALPHA)
+                pygame.draw.circle(range_surf, (*light_color, 40), (r, r), r)
+                pygame.draw.circle(range_surf, (*light_color, 80), (r, r), r, 1)
+                surface.blit(range_surf, (scx - r, scy - r))
+            else:
+                # Cone range for stationary ranged units
+                cone_half_angle = 0.5  # ~57 degrees total cone
+                cone_surf = pygame.Surface((r * 2 + 4, r * 2 + 4), pygame.SRCALPHA)
+                cx_s, cy_s = r + 2, r + 2
+                # Build cone polygon: center -> arc points -> center
+                num_pts = 16
+                pts = [(int(cx_s), int(cy_s))]
+                for i in range(num_pts + 1):
+                    a = self.facing_angle - cone_half_angle + (2 * cone_half_angle * i / num_pts)
+                    px = cx_s + math.cos(a) * r
+                    py = cy_s + math.sin(a) * r
+                    pts.append((int(px), int(py)))
+                pts.append((int(cx_s), int(cy_s)))
+                pygame.draw.polygon(cone_surf, (*light_color, 35), pts)
+                pygame.draw.lines(cone_surf, (*light_color, 80), True, pts, 1)
+                surface.blit(cone_surf, (int(scx - r - 2), int(scy - r - 2)))

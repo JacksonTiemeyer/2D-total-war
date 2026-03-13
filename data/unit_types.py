@@ -11,6 +11,7 @@ class UnitStats:
                  armor_penetration=0, ranged_armor_penetration=0,
                  exhaustion_rate=1.0, mass=1.0,
                  can_brace=False, is_spear=False,
+                 can_fire_while_moving=False,
                  description=""):
         self.name = name
         self.health = health
@@ -33,6 +34,7 @@ class UnitStats:
         self.mass = mass                             # affects charge impact
         self.can_brace = can_brace                   # can brace vs charges
         self.is_spear = is_spear                     # spearman/polearm unit (diamond shape)
+        self.can_fire_while_moving = can_fire_while_moving  # can shoot while moving (horse archers)
         self.description = description
 
 
@@ -93,7 +95,7 @@ BERSERKERS = UnitStats(
 ARCHERS = UnitStats(
     name="Archers",
     health=60, melee_attack=4, melee_defense=3,
-    ranged_attack=14, range_distance=250,
+    ranged_attack=14, range_distance=320,
     speed=2.0, armor=5,
     squad_size=20, cost=130, upkeep=10,
     weapon_strength=6, ranged_strength=16,
@@ -157,6 +159,7 @@ HORSE_ARCHERS = UnitStats(
     weapon_strength=7, ranged_strength=14,
     armor_penetration=5, ranged_armor_penetration=10,
     exhaustion_rate=0.9, mass=3.0,
+    can_fire_while_moving=True,
     description="Shoot and scoot. Your opponent will hate you.",
 )
 
@@ -165,7 +168,7 @@ HORSE_ARCHERS = UnitStats(
 GENERAL_COMMANDER = UnitStats(
     name="Commander",
     health=200, melee_attack=18, melee_defense=16,
-    speed=3.0, charge_bonus=8, armor=25, shield=True,
+    speed=2.25, charge_bonus=8, armor=25, shield=True,
     squad_size=1, cost=0, upkeep=0,
     weapon_strength=20, armor_penetration=20,
     exhaustion_rate=0.8, mass=2.0,
@@ -175,7 +178,7 @@ GENERAL_COMMANDER = UnitStats(
 GENERAL_CHAMPION = UnitStats(
     name="Champion",
     health=250, melee_attack=28, melee_defense=12,
-    speed=3.2, charge_bonus=12, armor=20, shield=False,
+    speed=2.4, charge_bonus=12, armor=20, shield=False,
     squad_size=1, cost=0, upkeep=0,
     weapon_strength=32, armor_penetration=40,
     exhaustion_rate=0.7, mass=1.5,
@@ -186,7 +189,7 @@ GENERAL_STRATEGIST = UnitStats(
     name="Strategist",
     health=140, melee_attack=10, melee_defense=10,
     ranged_attack=22, range_distance=200,
-    speed=2.8, armor=10, shield=False,
+    speed=2.1, armor=10, shield=False,
     squad_size=1, cost=0, upkeep=0,
     weapon_strength=12, ranged_strength=26,
     armor_penetration=10, ranged_armor_penetration=30,
@@ -250,6 +253,7 @@ SANDSTORM_RIDERS = UnitStats(
     weapon_strength=8, ranged_strength=16,
     armor_penetration=5, ranged_armor_penetration=15,
     exhaustion_rate=0.8, mass=3.0,
+    can_fire_while_moving=True,
     description="Horse archers who fire while moving. The only ones who can.",
 )
 
@@ -327,6 +331,7 @@ STEPPE_HORSE_ARCHERS = UnitStats(
     weapon_strength=6, ranged_strength=15,
     armor_penetration=5, ranged_armor_penetration=10,
     exhaustion_rate=0.7, mass=3.0,
+    can_fire_while_moving=True,
     description="Lighter and faster than other horse archers. Masters of kiting.",
 )
 

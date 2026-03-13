@@ -372,6 +372,52 @@ class BattleScene:
                     s.x -= (ddx / d) * pull
                     s.y -= (ddy / d) * pull
 
+        # General-soldier collisions: generals push and get pushed by enemy soldiers
+        # and also deal/take melee damage when in contact
+        gen_push_radius = COLLISION_RADIUS * 1.5  # generals are bigger
+        for g in self.all_generals:
+            if not g.alive or g.duel_state == DuelState.ACTIVE:
+                continue
+            gcx = int(g.x // cell_size)
+            gcy = int(g.y // cell_size)
+            for dx in range(-1, 2):
+                for dy in range(-1, 2):
+                    key = (gcx + dx, gcy + dy)
+                    if key not in grid:
+                        continue
+                    for (s, sq) in grid[key]:
+                        if sq.team == g.team:
+                            continue  # only collide with enemy soldiers
+                        ddx = g.x - s.x
+                        ddy = g.y - s.y
+                        dist_sq_val = ddx * ddx + ddy * ddy
+                        if dist_sq_val >= gen_push_radius * gen_push_radius or dist_sq_val < 0.01:
+                            continue
+                        dist_val = dist_sq_val ** 0.5
+                        overlap = gen_push_radius - dist_val
+                        nx = ddx / dist_val
+                        ny = ddy / dist_val
+                        # General has high mass (2.0+), push soldier more
+                        g_mass = g.unit_stats.mass
+                        s_mass = sq.unit_stats.mass
+                        total = g_mass + s_mass
+                        push_g = overlap * COLLISION_PUSH_STRENGTH * (s_mass / total) * 0.5
+                        push_s = overlap * COLLISION_PUSH_STRENGTH * (g_mass / total)
+                        g.x += nx * push_g
+                        g.y += ny * push_g
+                        s.x -= nx * push_s
+                        s.y -= ny * push_s
+                        # General auto-attacks nearby enemy soldiers
+                        if dist_val < MELEE_RANGE * 2 and g.attack_cooldown == 0:
+                            dmg = max(1, g.unit_stats.weapon_strength *
+                                      random.uniform(0.8, 1.2) - s.stats.armor * 0.3)
+                            s.take_damage(dmg, g.unit_stats.armor_penetration)
+                            g.attack_cooldown = 20
+                            if not s.alive:
+                                g.kills += 1
+                                sq._dying_soldiers.append(s)
+                                sq.on_casualty()
+
     def _estimate_formation_depth(self, squad):
         """Estimate how many rows deep a formation is (for punch-through check)."""
         alive = squad.alive_soldiers
@@ -774,22 +820,33 @@ class BattleScene:
                 target_general = g
                 break
 
+        # Selected general + enemy general = duel challenge
         if target_general and self.selected_general:
             self.selected_general.challenge_duel(target_general)
             return
 
+        # Selected squads targeting
         if self.selected_squads:
             if target_squad:
                 for sq in self.selected_squads:
                     sq.give_attack_order(target_squad)
+            elif target_general:
+                # Squads move to attack the enemy general's position
+                for sq in self.selected_squads:
+                    sq.give_move_order(target_general.x, target_general.y)
             else:
                 count = len(self.selected_squads)
                 for i, sq in enumerate(self.selected_squads):
                     offset_y = (i - count / 2.0) * 60
                     sq.give_move_order(wx, wy + offset_y)
 
+        # Selected general with no enemy general target = move order
         if self.selected_general and not target_general:
-            self.selected_general.give_move_order(wx, wy)
+            if target_squad:
+                # General moves to attack the enemy squad position
+                self.selected_general.give_move_order(target_squad.x, target_squad.y)
+            else:
+                self.selected_general.give_move_order(wx, wy)
 
     def update(self):
         if self.paused or self.deployment_phase:
@@ -1209,16 +1266,34 @@ class BattleScene:
 
             scx, scy = self.camera.world_to_screen(*sq.center)
 
-            # Show range circle for hovered ranged units (selected ones already
-            # get their range circle drawn in squad.draw)
+            # Show range indicator for hovered ranged units (selected ones already
+            # get their range indicator drawn in squad.draw)
             if sq is self._hovered_squad and sq.is_ranged and not sq.selected:
                 light_color = TEAM_COLORS_LIGHT.get(sq.team, (180, 180, 180))
                 r = self.camera.scale(sq.unit_stats.range_distance)
                 if r > 2:
-                    range_surf = pygame.Surface((int(r * 2), int(r * 2)), pygame.SRCALPHA)
-                    pygame.draw.circle(range_surf, (*light_color, 30), (int(r), int(r)), int(r))
-                    pygame.draw.circle(range_surf, (*light_color, 60), (int(r), int(r)), int(r), 1)
-                    surface.blit(range_surf, (int(scx - r), int(scy - r)))
+                    if sq.unit_stats.can_fire_while_moving:
+                        # Circle for mobile shooters
+                        range_surf = pygame.Surface((int(r * 2), int(r * 2)), pygame.SRCALPHA)
+                        pygame.draw.circle(range_surf, (*light_color, 30), (int(r), int(r)), int(r))
+                        pygame.draw.circle(range_surf, (*light_color, 60), (int(r), int(r)), int(r), 1)
+                        surface.blit(range_surf, (int(scx - r), int(scy - r)))
+                    else:
+                        # Cone for stationary ranged
+                        cone_half_angle = 0.5
+                        cone_surf = pygame.Surface((int(r * 2 + 4), int(r * 2 + 4)), pygame.SRCALPHA)
+                        cx_s, cy_s = int(r + 2), int(r + 2)
+                        num_pts = 16
+                        pts = [(cx_s, cy_s)]
+                        for ii in range(num_pts + 1):
+                            a = sq.facing_angle - cone_half_angle + (2 * cone_half_angle * ii / num_pts)
+                            px = cx_s + math.cos(a) * r
+                            py = cy_s + math.sin(a) * r
+                            pts.append((int(px), int(py)))
+                        pts.append((cx_s, cy_s))
+                        pygame.draw.polygon(cone_surf, (*light_color, 25), pts)
+                        pygame.draw.lines(cone_surf, (*light_color, 50), True, pts, 1)
+                        surface.blit(cone_surf, (int(scx - r - 2), int(scy - r - 2)))
 
             # Show engagement state for hovered squad
             if sq is self._hovered_squad and sq.state == SquadState.FIGHTING:
