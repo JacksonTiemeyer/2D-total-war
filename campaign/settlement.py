@@ -5,7 +5,7 @@ from core.settings import (
     SETTLEMENT_RADIUS, TEAM_COLORS, INCOME_PER_SETTLEMENT,
     WHITE, GREY, DARK_GREY, BROWN, GOLD,
 )
-from data.unit_types import ALL_RECRUITABLE
+from data.unit_types import ALL_RECRUITABLE, FACTION_SPECIALTY_UNITS
 
 
 class SettlementType:
@@ -44,11 +44,24 @@ class Settlement:
         self.refresh_recruits()
 
     def refresh_recruits(self):
-        """Refresh the available recruitment pool."""
+        """Refresh the available recruitment pool.
+
+        Faction-owned settlements include that faction's specialty units
+        in the pool. Castles guarantee at least one specialty unit.
+        """
         import random
         pool = ALL_RECRUITABLE[:]
+        specialty = FACTION_SPECIALTY_UNITS.get(self.owner, [])
+        if specialty:
+            pool = pool + specialty
         random.shuffle(pool)
-        self.available_recruits = pool[:self.recruitment_slots]
+        picks = pool[:self.recruitment_slots]
+        # Castles guarantee a faction specialty unit if available
+        if (self.settlement_type == SettlementType.CASTLE
+                and specialty
+                and not any(u in specialty for u in picks)):
+            picks[-1] = random.choice(specialty)
+        self.available_recruits = picks
 
     def draw(self, surface, camera):
         sx, sy = camera.world_to_screen(self.x, self.y)

@@ -194,6 +194,163 @@ GENERAL_STRATEGIST = UnitStats(
     description="Boosts ranged units and weakens enemy morale from afar.",
 )
 
+# === FACTION SPECIALTY UNITS (A9) ===
+
+# Iron Empire
+IRONCLAD_LEGIONNAIRES = UnitStats(
+    name="Ironclad Legionnaires",
+    health=180, melee_attack=14, melee_defense=20,
+    speed=1.2, charge_bonus=4, armor=45, shield=True,
+    squad_size=16, cost=400, upkeep=35,
+    weapon_strength=16, armor_penetration=15,
+    exhaustion_rate=1.6, mass=3.0, can_brace=True,
+    description="Ultra-heavy infantry. Nearly immovable in defensive stance.",
+)
+
+SIEGE_ENGINEERS = UnitStats(
+    name="Siege Engineers",
+    health=90, melee_attack=8, melee_defense=8,
+    speed=1.5, charge_bonus=0, armor=15, shield=False,
+    squad_size=12, cost=250, upkeep=20,
+    weapon_strength=10, armor_penetration=10,
+    exhaustion_rate=1.0, mass=1.5,
+    description="Battlefield utility specialists. Sturdy builders and fighters.",
+)
+
+# Forest Alliance
+SHADOWSTALKERS = UnitStats(
+    name="Shadowstalkers",
+    health=55, melee_attack=6, melee_defense=3,
+    ranged_attack=18, range_distance=220,
+    speed=2.6, armor=0,
+    squad_size=14, cost=280, upkeep=22,
+    weapon_strength=6, ranged_strength=20,
+    armor_penetration=5, ranged_armor_penetration=20,
+    exhaustion_rate=0.6, mass=1.0,
+    description="Stealth archers. Invisible until they fire or enemies get close.",
+)
+
+TREEWARDEN_SENTINELS = UnitStats(
+    name="Treewarden Sentinels",
+    health=120, melee_attack=12, melee_defense=16,
+    speed=2.2, charge_bonus=3, armor=15, shield=True,
+    squad_size=18, cost=200, upkeep=16,
+    weapon_strength=14, armor_penetration=15,
+    exhaustion_rate=0.9, mass=1.5, can_brace=True, is_spear=True,
+    description="Forest spearmen. Gain bonuses fighting among the trees.",
+)
+
+# Desert Raiders
+SANDSTORM_RIDERS = UnitStats(
+    name="Sandstorm Riders",
+    health=75, melee_attack=7, melee_defense=4,
+    ranged_attack=14, range_distance=170,
+    speed=4.5, charge_bonus=6, armor=5,
+    squad_size=10, cost=300, upkeep=25,
+    weapon_strength=8, ranged_strength=16,
+    armor_penetration=5, ranged_armor_penetration=15,
+    exhaustion_rate=0.8, mass=3.0,
+    description="Horse archers who fire while moving. The only ones who can.",
+)
+
+DUNE_ASSASSINS = UnitStats(
+    name="Dune Assassins",
+    health=65, melee_attack=20, melee_defense=5,
+    speed=3.5, charge_bonus=18, armor=5, shield=False,
+    squad_size=10, cost=260, upkeep=22,
+    weapon_strength=24, armor_penetration=30,
+    exhaustion_rate=0.7, mass=1.0,
+    description="Lightning-fast shock troops. Deadly on the charge, fragile in prolonged melee.",
+)
+
+# Northern Holds
+NORTHERN_BERSERKERS = UnitStats(
+    name="Berserker Ulfhednar",
+    health=130, melee_attack=26, melee_defense=2,
+    speed=2.8, charge_bonus=14, armor=0, shield=False,
+    squad_size=12, cost=320, upkeep=28,
+    weapon_strength=34, armor_penetration=40,
+    exhaustion_rate=0.3, mass=1.5,
+    description="Ignore exhaustion. Gain damage as health drops. Cannot rout.",
+)
+
+SHIELDWALL_VETERANS = UnitStats(
+    name="Shieldwall Veterans",
+    health=160, melee_attack=12, melee_defense=22,
+    speed=1.3, charge_bonus=2, armor=35, shield=True,
+    squad_size=16, cost=350, upkeep=30,
+    weapon_strength=14, armor_penetration=10,
+    exhaustion_rate=1.2, mass=2.5, can_brace=True, is_spear=True,
+    description="Highest brace bonus in the game. Massive morale. Immovable wall.",
+)
+
+# Maritime Republic
+CORSAIR_CROSSBOWMEN = UnitStats(
+    name="Corsair Crossbowmen",
+    health=75, melee_attack=7, melee_defense=5,
+    ranged_attack=22, range_distance=180,
+    speed=2.0, armor=12,
+    squad_size=14, cost=240, upkeep=18,
+    weapon_strength=8, ranged_strength=28,
+    armor_penetration=10, ranged_armor_penetration=50,
+    exhaustion_rate=0.9, mass=1.0,
+    description="Shorter range than archers but devastating armor-piercing bolts.",
+)
+
+MARINE_BOARDERS = UnitStats(
+    name="Marine Boarders",
+    health=100, melee_attack=16, melee_defense=10,
+    speed=2.6, charge_bonus=6, armor=12, shield=False,
+    squad_size=18, cost=220, upkeep=18,
+    weapon_strength=18, armor_penetration=25,
+    exhaustion_rate=0.8, mass=1.5, is_spear=True,
+    description="Fast infantry with hook weapons. Excellent against cavalry.",
+)
+
+# Steppe Horde
+KHANS_CHOSEN = UnitStats(
+    name="Khan's Chosen",
+    health=180, melee_attack=18, melee_defense=12,
+    speed=3.8, charge_bonus=28, armor=30, shield=True,
+    squad_size=8, cost=450, upkeep=40,
+    weapon_strength=22, armor_penetration=35,
+    exhaustion_rate=1.2, mass=4.0,
+    description="Elite heavy cavalry. Highest mass and charge bonus in the game.",
+)
+
+STEPPE_HORSE_ARCHERS = UnitStats(
+    name="Steppe Horse Archers",
+    health=65, melee_attack=4, melee_defense=3,
+    ranged_attack=13, range_distance=190,
+    speed=4.6, charge_bonus=3, armor=3,
+    squad_size=12, cost=240, upkeep=20,
+    weapon_strength=6, ranged_strength=15,
+    armor_penetration=5, ranged_armor_penetration=10,
+    exhaustion_rate=0.7, mass=3.0,
+    description="Lighter and faster than other horse archers. Masters of kiting.",
+)
+
+# Holy Order
+TEMPLAR_KNIGHTS = UnitStats(
+    name="Templar Knights",
+    health=170, melee_attack=16, melee_defense=14,
+    speed=3.6, charge_bonus=22, armor=35, shield=True,
+    squad_size=8, cost=420, upkeep=38,
+    weapon_strength=20, armor_penetration=25,
+    exhaustion_rate=1.1, mass=3.5,
+    description="Heavy cavalry with a morale aura. Nearby allies gain courage.",
+)
+
+FLAGELLANTS = UnitStats(
+    name="Flagellants",
+    health=70, melee_attack=18, melee_defense=2,
+    speed=2.4, charge_bonus=6, armor=0, shield=False,
+    squad_size=30, cost=100, upkeep=5,
+    weapon_strength=22, armor_penetration=20,
+    exhaustion_rate=0.5, mass=1.0,
+    description="Cheap zealot swarm. High damage, no defense, immune to rout.",
+)
+
 # Recruitment pools
 INFANTRY_ROSTER = [MILITIA, SWORDSMEN, SPEARMEN, HEAVY_INFANTRY, BERSERKERS]
 RANGED_ROSTER = [ARCHERS, CROSSBOWMEN, SKIRMISHERS]
@@ -201,3 +358,17 @@ CAVALRY_ROSTER = [LIGHT_CAVALRY, HEAVY_CAVALRY, HORSE_ARCHERS]
 GENERAL_ROSTER = [GENERAL_COMMANDER, GENERAL_CHAMPION, GENERAL_STRATEGIST]
 
 ALL_RECRUITABLE = INFANTRY_ROSTER + RANGED_ROSTER + CAVALRY_ROSTER
+
+# Faction specialty units keyed by faction team index
+# Team indices: 1=Iron Empire, 2=Forest Alliance, 3=Desert Raiders,
+# 4=Northern Holds, 5=Maritime Republic, 6=Steppe Horde, 7=Holy Order, 8=Free Cities
+FACTION_SPECIALTY_UNITS = {
+    1: [IRONCLAD_LEGIONNAIRES, SIEGE_ENGINEERS],
+    2: [SHADOWSTALKERS, TREEWARDEN_SENTINELS],
+    3: [SANDSTORM_RIDERS, DUNE_ASSASSINS],
+    4: [NORTHERN_BERSERKERS, SHIELDWALL_VETERANS],
+    5: [CORSAIR_CROSSBOWMEN, MARINE_BOARDERS],
+    6: [KHANS_CHOSEN, STEPPE_HORSE_ARCHERS],
+    7: [TEMPLAR_KNIGHTS, FLAGELLANTS],
+    8: [],  # Free Cities hire mercenaries, no unique troops
+}
