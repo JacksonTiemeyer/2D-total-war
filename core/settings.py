@@ -30,10 +30,20 @@ GOLD = (255, 215, 0)
 
 # Team colors
 TEAM_COLORS = {
-    0: BLUE,
-    1: RED,
-    2: (40, 160, 40),     # Forest Alliance - green
-    3: (200, 140, 40),    # Desert Raiders - orange
+    0: BLUE,                 # Player / Independent
+    1: RED,                  # Iron Empire
+    2: (40, 160, 40),        # Forest Alliance
+    3: (200, 140, 40),       # Desert Raiders
+    4: (60, 160, 160),       # Northern Holds - teal
+    5: (140, 60, 180),       # Maritime Republic - purple
+    6: (140, 100, 50),       # Steppe Horde - brown
+    7: (200, 180, 60),       # Holy Order - gold
+    8: (140, 140, 140),      # Free Cities - grey
+    90: (120, 60, 60),       # Bandits
+    91: (80, 40, 100),       # Cultists
+    92: (100, 70, 50),       # Cannibals
+    93: (110, 110, 90),      # Deserters
+    94: (100, 120, 140),     # Mercenaries
     None: GREY,
 }
 TEAM_COLORS_LIGHT = {
@@ -41,6 +51,16 @@ TEAM_COLORS_LIGHT = {
     1: (220, 100, 100),
     2: (120, 220, 120),
     3: (240, 200, 100),
+    4: (140, 220, 220),
+    5: (200, 140, 240),
+    6: (200, 160, 100),
+    7: (255, 240, 120),
+    8: (200, 200, 200),
+    90: (180, 100, 100),
+    91: (140, 80, 160),
+    92: (160, 120, 90),
+    93: (170, 170, 150),
+    94: (160, 180, 200),
     None: (180, 180, 180),
 }
 
@@ -49,8 +69,20 @@ BATTLE_MAP_WIDTH = 3000
 BATTLE_MAP_HEIGHT = 2000
 
 # Campaign map
-CAMPAIGN_MAP_WIDTH = 2400
-CAMPAIGN_MAP_HEIGHT = 1800
+CAMPAIGN_MAP_WIDTH = 4000
+CAMPAIGN_MAP_HEIGHT = 3000
+
+# Real-time campaign
+CAMPAIGN_TICKS_PER_DAY = 300         # frames per in-game day at 1x speed
+CAMPAIGN_SPEED_PAUSED = 0
+CAMPAIGN_SPEED_1X = 1
+CAMPAIGN_SPEED_2X = 2
+CAMPAIGN_SPEED_3X = 4
+
+# Campaign fog of war
+CAMPAIGN_VISION_RADIUS = 200          # base vision around player army
+CAMPAIGN_SETTLEMENT_VISION = 150      # vision around owned settlements
+CAMPAIGN_FOG_ALPHA = 120
 
 # Camera
 CAMERA_SPEED = 8
