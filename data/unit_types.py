@@ -10,7 +10,7 @@ class UnitStats:
                  weapon_strength=10, ranged_strength=0,
                  armor_penetration=0, ranged_armor_penetration=0,
                  exhaustion_rate=1.0, mass=1.0,
-                 can_brace=False,
+                 can_brace=False, is_spear=False,
                  description=""):
         self.name = name
         self.health = health
@@ -32,6 +32,7 @@ class UnitStats:
         self.exhaustion_rate = exhaustion_rate       # multiplier on fatigue gain
         self.mass = mass                             # affects charge impact
         self.can_brace = can_brace                   # can brace vs charges
+        self.is_spear = is_spear                     # spearman/polearm unit (diamond shape)
         self.description = description
 
 
@@ -43,7 +44,7 @@ MILITIA = UnitStats(
     speed=2.0, charge_bonus=2, armor=5, shield=True,
     squad_size=30, cost=75, upkeep=5,
     weapon_strength=8, armor_penetration=5,
-    exhaustion_rate=1.2, mass=1.0,
+    exhaustion_rate=1.2, mass=1.5,
     description="Cheap and plentiful. They hold the line... barely.",
 )
 
@@ -53,7 +54,7 @@ SWORDSMEN = UnitStats(
     speed=2.0, charge_bonus=4, armor=15, shield=True,
     squad_size=24, cost=150, upkeep=12,
     weapon_strength=14, armor_penetration=15,
-    exhaustion_rate=1.0, mass=1.0,
+    exhaustion_rate=1.0, mass=1.5,
     description="Reliable infantry. The backbone of any army.",
 )
 
@@ -63,7 +64,7 @@ SPEARMEN = UnitStats(
     speed=1.8, charge_bonus=2, armor=10, shield=True,
     squad_size=24, cost=120, upkeep=10,
     weapon_strength=12, armor_penetration=20,
-    exhaustion_rate=1.0, mass=1.0, can_brace=True,
+    exhaustion_rate=1.0, mass=1.5, can_brace=True, is_spear=True,
     description="Anti-cavalry specialists. Brace for impact!",
 )
 
@@ -73,7 +74,7 @@ HEAVY_INFANTRY = UnitStats(
     speed=1.5, charge_bonus=6, armor=30, shield=True,
     squad_size=16, cost=300, upkeep=25,
     weapon_strength=20, armor_penetration=25,
-    exhaustion_rate=1.4, mass=1.3,
+    exhaustion_rate=1.4, mass=2.0,
     description="Armored elite. Slow but devastating. Tires faster under all that steel.",
 )
 
@@ -83,7 +84,7 @@ BERSERKERS = UnitStats(
     speed=2.5, charge_bonus=10, armor=5, shield=False,
     squad_size=16, cost=250, upkeep=20,
     weapon_strength=28, armor_penetration=35,
-    exhaustion_rate=0.6, mass=1.1,
+    exhaustion_rate=0.6, mass=1.5,
     description="All offense, no defense. Rage fuels them past exhaustion.",
 )
 
@@ -97,7 +98,7 @@ ARCHERS = UnitStats(
     squad_size=20, cost=130, upkeep=10,
     weapon_strength=6, ranged_strength=16,
     armor_penetration=5, ranged_armor_penetration=10,
-    exhaustion_rate=0.8, mass=0.8,
+    exhaustion_rate=0.8, mass=1.0,
     description="Rain arrows upon your foes from a safe distance.",
 )
 
@@ -109,7 +110,7 @@ CROSSBOWMEN = UnitStats(
     squad_size=16, cost=180, upkeep=15,
     weapon_strength=7, ranged_strength=24,
     armor_penetration=5, ranged_armor_penetration=40,
-    exhaustion_rate=0.9, mass=0.9,
+    exhaustion_rate=0.9, mass=1.0,
     description="Slower to fire, but bolts punch through armor like butter.",
 )
 
@@ -121,7 +122,7 @@ SKIRMISHERS = UnitStats(
     squad_size=16, cost=100, upkeep=8,
     weapon_strength=8, ranged_strength=12,
     armor_penetration=10, ranged_armor_penetration=15,
-    exhaustion_rate=0.7, mass=0.7,
+    exhaustion_rate=0.7, mass=1.0,
     description="Fast and annoying. Hit and run specialists. Never seem to tire.",
 )
 
@@ -133,7 +134,7 @@ LIGHT_CAVALRY = UnitStats(
     speed=4.0, charge_bonus=12, armor=10,
     squad_size=12, cost=200, upkeep=18,
     weapon_strength=12, armor_penetration=10,
-    exhaustion_rate=0.8, mass=2.0,
+    exhaustion_rate=0.8, mass=3.0,
     description="Fast flankers. Great for running down routers.",
 )
 
@@ -155,7 +156,7 @@ HORSE_ARCHERS = UnitStats(
     squad_size=10, cost=220, upkeep=20,
     weapon_strength=7, ranged_strength=14,
     armor_penetration=5, ranged_armor_penetration=10,
-    exhaustion_rate=0.9, mass=1.8,
+    exhaustion_rate=0.9, mass=3.0,
     description="Shoot and scoot. Your opponent will hate you.",
 )
 

@@ -21,7 +21,10 @@ class Soldier:
         self.attack_cooldown = 0
         self.formation_x = 0.0  # offset from squad center
         self.formation_y = 0.0
+        self.facing_angle = 0.0  # individual facing for shape rotation
         self.exhaustion = 0.0   # 0-100
+        # Engagement lock (A1): soldier currently locked in melee with
+        self.engaged_with = None    # reference to enemy Soldier or None
         # Animation state
         self.hit_flash_timer = 0    # frames remaining for white flash
         self.death_timer = -1       # -1 = alive, >0 = dying animation frames

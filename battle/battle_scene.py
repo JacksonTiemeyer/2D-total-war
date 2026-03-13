@@ -14,8 +14,11 @@ from core.settings import (
     WEATHER_TYPES, WEATHER_RAIN_ACCURACY, WEATHER_RAIN_EXHAUSTION,
     WEATHER_FOG_VISION, WEATHER_MUD_SPEED, WEATHER_MUD_CHARGE,
     WEATHER_WIND_ACCURACY,
-    SOLDIER_RADIUS, COLLISION_GRID_CELL_SIZE, COLLISION_PUSH_STRENGTH,
+    SOLDIER_RADIUS, SOLDIER_SPACING, COLLISION_GRID_CELL_SIZE, COLLISION_PUSH_STRENGTH,
     COLLISION_FRIENDLY_PUSH, COLLISION_ENGAGE_RADIUS,
+    COLLISION_RADIUS, ENGAGEMENT_LOCK_DISTANCE, ENGAGEMENT_BREAK_DISTANCE,
+    CAVALRY_PUNCHTHROUGH_MASS_RATIO, CAVALRY_PUNCHTHROUGH_PUSH,
+    CAVALRY_PUNCHTHROUGH_MIN_DEPTH,
     MOVE_MODE_WALK, MOVE_MODE_MARCH, MOVE_MODE_RUN,
 )
 from core.camera import Camera
@@ -254,7 +257,11 @@ class BattleScene:
                     break
 
     def _resolve_collisions(self):
-        """Resolve soldier-soldier collisions using spatial grid."""
+        """Resolve soldier-soldier collisions using spatial grid.
+
+        Includes engagement lock (soldiers in melee contact cannot freely
+        disengage) and cavalry punch-through on charge.
+        """
         cell_size = COLLISION_GRID_CELL_SIZE
         grid = {}
 
@@ -272,7 +279,18 @@ class BattleScene:
                 grid[key].append((s, sq))
                 all_soldiers.append((s, sq))
 
-        push_radius = SOLDIER_RADIUS * 2.5
+        push_radius = COLLISION_RADIUS
+        engage_dist = ENGAGEMENT_LOCK_DISTANCE
+        break_dist = ENGAGEMENT_BREAK_DISTANCE
+
+        # Clear dead engagements
+        for (s, sq) in all_soldiers:
+            if s.engaged_with is not None and (
+                not s.engaged_with.alive
+                or sq.state == SquadState.ROUTED
+            ):
+                s.engaged_with = None
+
         # Check collisions in neighboring cells
         for (s1, sq1) in all_soldiers:
             cx = int(s1.x // cell_size)
@@ -288,6 +306,15 @@ class BattleScene:
                         ddx = s1.x - s2.x
                         ddy = s1.y - s2.y
                         dist_sq = ddx * ddx + ddy * ddy
+                        same_team = sq1.team == sq2.team
+
+                        # Engagement lock for enemies within engage distance
+                        if not same_team and dist_sq < engage_dist * engage_dist and dist_sq > 0.01:
+                            if s1.engaged_with is None:
+                                s1.engaged_with = s2
+                            if s2.engaged_with is None:
+                                s2.engaged_with = s1
+
                         if dist_sq >= push_radius * push_radius or dist_sq < 0.01:
                             continue
                         dist_val = dist_sq ** 0.5
@@ -295,7 +322,6 @@ class BattleScene:
                         nx = ddx / dist_val
                         ny = ddy / dist_val
 
-                        same_team = sq1.team == sq2.team
                         if same_team:
                             # Soft push for friendlies
                             push = overlap * COLLISION_FRIENDLY_PUSH * 0.5
@@ -311,10 +337,64 @@ class BattleScene:
                             # Lighter unit gets pushed more
                             push1 = overlap * COLLISION_PUSH_STRENGTH * (mass2 / total_mass)
                             push2 = overlap * COLLISION_PUSH_STRENGTH * (mass1 / total_mass)
+
+                            # Cavalry punch-through: charging cavalry pushes harder
+                            # against thin formations
+                            if (sq1.is_cavalry and sq1.state == SquadState.CHARGING
+                                    and mass1 / mass2 >= CAVALRY_PUNCHTHROUGH_MASS_RATIO):
+                                target_depth = self._estimate_formation_depth(sq2)
+                                if target_depth < CAVALRY_PUNCHTHROUGH_MIN_DEPTH:
+                                    push2 *= CAVALRY_PUNCHTHROUGH_PUSH
+                            elif (sq2.is_cavalry and sq2.state == SquadState.CHARGING
+                                    and mass2 / mass1 >= CAVALRY_PUNCHTHROUGH_MASS_RATIO):
+                                target_depth = self._estimate_formation_depth(sq1)
+                                if target_depth < CAVALRY_PUNCHTHROUGH_MIN_DEPTH:
+                                    push1 *= CAVALRY_PUNCHTHROUGH_PUSH
+
                             s1.x += nx * push1
                             s1.y += ny * push1
                             s2.x -= nx * push2
                             s2.y -= ny * push2
+
+        # Engagement lock: pull engaged soldiers back toward their opponent
+        for (s, sq) in all_soldiers:
+            if s.engaged_with is not None and s.engaged_with.alive:
+                ddx = s.x - s.engaged_with.x
+                ddy = s.y - s.engaged_with.y
+                d2 = ddx * ddx + ddy * ddy
+                if d2 > break_dist * break_dist:
+                    # Too far: disengage
+                    s.engaged_with = None
+                elif d2 > engage_dist * engage_dist and sq.state != SquadState.ROUTED:
+                    # Trying to move away but still within lock range: pull back
+                    d = d2 ** 0.5
+                    pull = (d - engage_dist) * 0.3
+                    s.x -= (ddx / d) * pull
+                    s.y -= (ddy / d) * pull
+
+    def _estimate_formation_depth(self, squad):
+        """Estimate how many rows deep a formation is (for punch-through check)."""
+        alive = squad.alive_soldiers
+        if len(alive) <= 1:
+            return 1
+        import math as _math
+        # Use facing angle to determine front-back axis
+        cos_f = _math.cos(squad.facing_angle)
+        sin_f = _math.sin(squad.facing_angle)
+        cx, cy = squad.center
+        # Project each soldier onto the facing axis
+        depths = []
+        for s in alive:
+            dx = s.x - cx
+            dy = s.y - cy
+            depth = dx * cos_f + dy * sin_f
+            depths.append(depth)
+        if not depths:
+            return 1
+        span = max(depths) - min(depths)
+        # Estimate rows from span and spacing
+        row_count = max(1, int(span / SOLDIER_SPACING + 0.5))
+        return row_count
 
     def _deploy_armies(self, player_army, enemy_army):
         start_x = 300
@@ -1110,7 +1190,12 @@ class BattleScene:
             self._draw_deployment(surface)
 
     def _draw_targeting_lines(self, surface):
-        """Draw targeting lines only for selected units and hovered units."""
+        """Draw targeting lines for selected and hovered units.
+
+        Selected units: show movement/attack order lines (waypoint indicators).
+        Hovered units: show current target line, attack range circle, and
+        engagement state.  When nothing is hovered the battlefield stays clean.
+        """
         target_surf = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
 
         # Determine which squads to show targeting for
@@ -1119,9 +1204,31 @@ class BattleScene:
             show_squads.add(self._hovered_squad)
 
         for sq in show_squads:
-            if sq.is_destroyed or not sq.target_squad:
+            if sq.is_destroyed:
                 continue
-            if sq.target_squad.is_destroyed:
+
+            scx, scy = self.camera.world_to_screen(*sq.center)
+
+            # Show range circle for hovered ranged units (selected ones already
+            # get their range circle drawn in squad.draw)
+            if sq is self._hovered_squad and sq.is_ranged and not sq.selected:
+                light_color = TEAM_COLORS_LIGHT.get(sq.team, (180, 180, 180))
+                r = self.camera.scale(sq.unit_stats.range_distance)
+                if r > 2:
+                    range_surf = pygame.Surface((int(r * 2), int(r * 2)), pygame.SRCALPHA)
+                    pygame.draw.circle(range_surf, (*light_color, 30), (int(r), int(r)), int(r))
+                    pygame.draw.circle(range_surf, (*light_color, 60), (int(r), int(r)), int(r), 1)
+                    surface.blit(range_surf, (int(scx - r), int(scy - r)))
+
+            # Show engagement state for hovered squad
+            if sq is self._hovered_squad and sq.state == SquadState.FIGHTING:
+                eng_font = pygame.font.SysFont(None, 16)
+                eng_text = eng_font.render("ENGAGED", True, (255, 200, 80))
+                surface.blit(eng_text, (int(scx) - eng_text.get_width() // 2,
+                                        int(scy) + self.camera.scale(25)))
+
+            # Target line
+            if not sq.target_squad or sq.target_squad.is_destroyed:
                 continue
             cx, cy = sq.center
             tx, ty = sq.target_squad.center

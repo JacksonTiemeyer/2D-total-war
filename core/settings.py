@@ -146,6 +146,14 @@ COLLISION_PUSH_STRENGTH = 0.8       # how strongly soldiers push apart
 COLLISION_FRIENDLY_PUSH = 0.3       # softer push for friendly soldiers
 COLLISION_ENGAGE_RADIUS = 18        # distance at which soldiers become "engaged"
 
+# Phase 2: Unit Physics & Visuals
+COLLISION_RADIUS = SOLDIER_RADIUS * 2.5   # base collision radius for push detection
+ENGAGEMENT_LOCK_DISTANCE = 20             # soldiers within this of an enemy become engaged
+ENGAGEMENT_BREAK_DISTANCE = 35            # must exceed this distance to disengage
+CAVALRY_PUNCHTHROUGH_MASS_RATIO = 1.5     # mass ratio needed for cavalry punch-through
+CAVALRY_PUNCHTHROUGH_PUSH = 2.5           # push force multiplier during charge punch-through
+CAVALRY_PUNCHTHROUGH_MIN_DEPTH = 3        # formation must be thinner than this for punch-through
+
 # Terrain Effects
 HILL_RANGED_BONUS = 1.15          # +15% ranged damage from hill
 HILL_CHARGE_DOWNHILL_BONUS = 1.20 # +20% charge bonus going downhill

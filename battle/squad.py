@@ -340,9 +340,10 @@ class Squad:
         if self.is_destroyed:
             return
 
-        # Update individual soldiers
+        # Update individual soldiers and sync facing angle
         for s in self.alive_soldiers:
             s.update()
+            s.facing_angle = self.facing_angle
 
         # Exhaustion tick
         self._update_exhaustion()
@@ -712,21 +713,38 @@ class Squad:
         return (min_x - padding, min_y - padding,
                 max_x - min_x + padding * 2, max_y - min_y + padding * 2)
 
-    def _draw_soldier_shape(self, surface, sx, sy, r, c):
-        """Draw a soldier with shape based on unit type."""
+    def _draw_soldier_shape(self, surface, sx, sy, r, c, facing=None):
+        """Draw a soldier with shape based on unit type, rotated by facing angle."""
         r = max(1, int(r))
+        fa = facing if facing is not None else self.facing_angle
         if self.is_cavalry:
-            # Oval / elongated ellipse
-            r2 = max(1, int(r * 1.4))
-            pygame.draw.ellipse(surface, c, (sx - r2, sy - r, r2 * 2, r * 2))
+            # Larger elongated ellipse rotated to facing direction
+            r_long = max(2, int(r * 1.6))
+            r_short = max(1, int(r * 0.9))
+            cos_a, sin_a = math.cos(fa), math.sin(fa)
+            # 6-point approximation of an oriented ellipse
+            pts = []
+            for i in range(8):
+                angle = i * math.pi * 2 / 8
+                px = math.cos(angle) * r_long
+                py = math.sin(angle) * r_short
+                rx = px * cos_a - py * sin_a
+                ry = px * sin_a + py * cos_a
+                pts.append((int(sx + rx), int(sy + ry)))
+            pygame.draw.polygon(surface, c, pts)
         elif self.is_spear:
-            # Diamond (rotated square)
-            points = [(sx, sy - r - 1), (sx + r + 1, sy),
-                       (sx, sy + r + 1), (sx - r - 1, sy)]
+            # Diamond (rotated square) aligned to facing
+            cos_a, sin_a = math.cos(fa), math.sin(fa)
+            d = r + 1
+            points = [
+                (int(sx + cos_a * d), int(sy + sin_a * d)),       # front
+                (int(sx - sin_a * d), int(sy + cos_a * d)),       # right
+                (int(sx - cos_a * d), int(sy - sin_a * d)),       # back
+                (int(sx + sin_a * d), int(sy - cos_a * d)),       # left
+            ]
             pygame.draw.polygon(surface, c, points)
         elif self.is_ranged:
-            # Triangle pointing toward facing
-            fa = self.facing_angle
+            # Triangle pointing toward facing direction
             cos_a, sin_a = math.cos(fa), math.sin(fa)
             tip_x = sx + cos_a * (r + 2)
             tip_y = sy + sin_a * (r + 2)
@@ -739,8 +757,17 @@ class Squad:
                        (int(right_x), int(right_y))]
             pygame.draw.polygon(surface, c, points)
         else:
-            # Square for melee infantry
-            pygame.draw.rect(surface, c, (sx - r, sy - r, r * 2, r * 2))
+            # Filled square for melee infantry, rotated to facing
+            cos_a, sin_a = math.cos(fa), math.sin(fa)
+            # Corners of a rotated square
+            corners = []
+            for cx_off, cy_off in [(-1, -1), (1, -1), (1, 1), (-1, 1)]:
+                px = cx_off * r
+                py = cy_off * r
+                rx = px * cos_a - py * sin_a
+                ry = px * sin_a + py * cos_a
+                corners.append((int(sx + rx), int(sy + ry)))
+            pygame.draw.polygon(surface, c, corners)
 
     def draw(self, surface, camera, fog_hidden=False):
         if fog_hidden:
@@ -767,7 +794,7 @@ class Squad:
                 c = (255, 255, 255)
             else:
                 c = tuple(int(ch * (0.4 + 0.6 * hp_ratio)) for ch in color)
-            self._draw_soldier_shape(surface, sx, sy, r, c)
+            self._draw_soldier_shape(surface, sx, sy, r, c, facing=s.facing_angle)
 
         # Draw visual effects (slashes and projectiles)
         for e in self.visual_effects:

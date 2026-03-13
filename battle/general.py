@@ -313,15 +313,11 @@ class General:
             pygame.draw.circle(glow_surf, (255, 50, 30, 80), (glow_r, glow_r), glow_r)
             surface.blit(glow_surf, (sx - glow_r, sy - glow_r))
 
-        # General body - diamond shape
-        points = [
-            (sx, sy - r - 2),
-            (sx + r + 2, sy),
-            (sx, sy + r + 2),
-            (sx - r - 2, sy),
-        ]
-        pygame.draw.polygon(surface, color, points)
-        pygame.draw.polygon(surface, GOLD, points, 2)
+        # General body - circle with outer ring + gold accent
+        inner_r = max(1, int(r))
+        outer_r = max(2, int(r + 3))
+        pygame.draw.circle(surface, GOLD, (int(sx), int(sy)), outer_r, 2)
+        pygame.draw.circle(surface, color, (int(sx), int(sy)), inner_r)
 
         # Level indicator (small number)
         if camera.zoom > 0.4:
