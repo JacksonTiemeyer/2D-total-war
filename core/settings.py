@@ -229,6 +229,7 @@ LOYALTY_BETRAY_THRESHOLD = 30     # below this, general may defect
 LOYALTY_BETRAY_CHANCE_BASE = 0.02 # daily chance at exactly threshold
 LOYALTY_BETRAY_AMBITIOUS_MULT = 2.0  # ambitious generals defect more
 LOYALTY_BETRAY_LOYAL_MULT = 0.3   # loyal generals rarely defect
+LOYALTY_BETRAY_GREEDY_MULT = 1.5  # greedy generals defect somewhat more
 LOYALTY_BATTLE_WIN_BONUS = 3      # loyalty gained on winning battle
 LOYALTY_BATTLE_LOSS_PENALTY = 5   # loyalty lost on losing battle
 PERSUASION_RANGE = 120            # world distance to attempt persuasion
@@ -251,3 +252,39 @@ RECRUIT_PRISONER_BASE_CHANCE = 0.25  # base chance to recruit a prisoner
 EXECUTE_REP_PENALTY_FACTION = -30 # reputation hit with prisoner's faction
 EXECUTE_REP_PENALTY_ALL = -5      # reputation hit with all factions
 EXECUTE_INTIMIDATION_BONUS = 10   # morale bonus in next battle after execution
+
+# D1: Terrain-specific Battles
+CAMPAIGN_TERRAIN_TYPES = ["plains", "forest", "mountain", "desert", "coastal"]
+
+# D2: Seasons & Weather (Campaign)
+SEASON_SPRING = "spring"
+SEASON_SUMMER = "summer"
+SEASON_AUTUMN = "autumn"
+SEASON_WINTER = "winter"
+SEASON_CYCLE_LENGTH = 100          # days per full cycle
+SEASON_SPRING_END = 25             # days 1-25
+SEASON_SUMMER_END = 50             # days 26-50
+SEASON_AUTUMN_END = 75             # days 51-75
+# days 76-100 = winter
+SEASON_SUMMER_EXHAUSTION_MULT = 1.3   # +30% exhaustion in summer battles
+SEASON_SUMMER_DESERT_SPEED_BONUS = 1.2 # +20% speed for desert factions in summer
+SEASON_AUTUMN_INCOME_BONUS = 1.5       # +50% settlement income in autumn (harvest)
+SEASON_AUTUMN_MUD_CHANCE = 0.4         # chance of mud weather in autumn battles
+SEASON_WINTER_MOVE_PENALTY = 0.7       # -30% campaign movement in winter
+SEASON_WINTER_MOUNTAIN_ATTRITION = 1   # soldiers lost per day in mountains during winter
+SEASON_WINTER_RANGED_PENALTY = 0.85    # -15% ranged accuracy in winter battles
+SEASON_WINTER_SNOW_CHANCE = 0.5        # chance of fog/rain weather in winter battles
+
+# D3: Supply Lines
+SUPPLY_RANGE = 400                  # max distance from friendly settlement before attrition
+SUPPLY_MORALE_LOSS = 2              # morale lost per day when out of supply
+SUPPLY_DESERTION_CHANCE = 0.05      # chance per squad per day of losing a soldier
+SUPPLY_WARNING_RANGE = 350          # range at which supply warning appears
+
+# D5: Tournaments & Arena
+TOURNAMENT_INTERVAL = 15            # days between tournaments at a town
+TOURNAMENT_ENTRY_FEE = 50           # gold cost to enter
+TOURNAMENT_ROUND_COUNT = 3          # number of rounds in bracket
+TOURNAMENT_BASE_REWARD = 200        # gold reward for winning
+TOURNAMENT_REP_REWARD = 10          # reputation reward for winning
+TOURNAMENT_ROUND_REWARDS = [25, 50, 200]  # gold per round won

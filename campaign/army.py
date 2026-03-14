@@ -241,8 +241,13 @@ class Army:
             (small_font, f"Gold: {self.gold}", (255, 215, 0)),
             (small_font, f"Upkeep: {self.upkeep}/turn", (200, 150, 100)),
             (small_font, f"General: {self.general_name} ({self.general_stats.name}) Lv{self.general_level}", WHITE),
-            (small_font, "--- Squads ---", (180, 180, 180)),
         ]
+        # D3: Supply status
+        morale = getattr(self, 'campaign_morale', 100)
+        if morale < 100:
+            morale_color = (200, 50, 50) if morale < 50 else (220, 180, 50)
+            texts.append((small_font, f"Supply Morale: {morale}", morale_color))
+        texts.append((small_font, "--- Squads ---", (180, 180, 180)))
         for sq in self.squads:
             chevrons = ">" * sq.rank_index if sq.rank_index > 0 else ""
             wound = f" [{sq.current_count}/{sq.max_count}]" if sq.is_understrength else ""

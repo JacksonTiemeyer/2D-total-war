@@ -27,6 +27,17 @@ from core.settings import (
     FACTION_JOIN_THRESHOLD, FACTION_LEAVE_PENALTY,
     REST_COST_PER_DAY,
     PERSUASION_RANGE,
+    # D2: Seasons
+    SEASON_SPRING, SEASON_SUMMER, SEASON_AUTUMN, SEASON_WINTER,
+    SEASON_CYCLE_LENGTH, SEASON_SPRING_END, SEASON_SUMMER_END, SEASON_AUTUMN_END,
+    SEASON_SUMMER_DESERT_SPEED_BONUS, SEASON_AUTUMN_INCOME_BONUS,
+    SEASON_WINTER_MOVE_PENALTY, SEASON_WINTER_MOUNTAIN_ATTRITION,
+    SEASON_AUTUMN_MUD_CHANCE, SEASON_WINTER_SNOW_CHANCE,
+    # D3: Supply Lines
+    SUPPLY_RANGE, SUPPLY_MORALE_LOSS, SUPPLY_DESERTION_CHANCE, SUPPLY_WARNING_RANGE,
+    # D5: Tournaments
+    TOURNAMENT_INTERVAL, TOURNAMENT_ENTRY_FEE, TOURNAMENT_ROUND_COUNT,
+    TOURNAMENT_BASE_REWARD, TOURNAMENT_REP_REWARD, TOURNAMENT_ROUND_REWARDS,
 )
 from core.camera import Camera
 from core.utils import distance, point_in_rect
@@ -65,7 +76,7 @@ class CampaignScene:
         self.show_diplomacy = False
         self.show_quest_log = False
         self.show_army_panel = False
-        self.pending_battle = None  # (player_army, enemy_army) tuple
+        self.pending_battle = None  # (player_army, enemy_army, terrain_type) tuple
 
         # B9/C3: Settlement interaction
         self.settlement_interaction = None  # SettlementInteraction instance or None
@@ -113,6 +124,30 @@ class CampaignScene:
         self.show_prisoners = False       # prisoner management overlay
         self.prisoner_action_msg = None   # feedback message for prisoner actions
         self.prisoner_action_timer = 0
+
+        # D1: Terrain zones (queryable from decorative terrain data)
+        self._terrain_forests = [
+            (200, 400, 120), (1000, 200, 80), (700, 800, 100),
+            (1500, 900, 90), (1900, 300, 70), (1100, 700, 110),
+            (900, 900, 85), (600, 1400, 95), (2800, 1500, 80),
+            (3300, 400, 75), (1700, 2200, 90),
+        ]
+        self._terrain_mountains = [
+            (1100, 150, 60), (1800, 600, 50), (300, 900, 45),
+            (1600, 100, 55), (3000, 400, 50), (2500, 1400, 45),
+            (500, 1800, 40),
+        ]
+        self._terrain_deserts = [
+            (2800, 1900, 200), (3200, 1700, 150), (3000, 2100, 120),
+        ]
+        self._terrain_water = [
+            (1200, 2700, 250), (800, 2500, 150), (1600, 2700, 180),
+        ]
+
+        # D5: Tournament state
+        self.tournament_towns = {}  # settlement_name -> next_tournament_day
+        self.active_tournament = None  # dict with tournament state or None
+        self.show_tournament = False
 
         self._generate_world()
         self._init_ai_controllers()
@@ -240,6 +275,18 @@ class CampaignScene:
             self.armies.append(army)
 
     def handle_event(self, event):
+        # D5: Tournament overlay takes top priority
+        if self.show_tournament and self.active_tournament:
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_RETURN:
+                    if self.active_tournament["finished"]:
+                        self._close_tournament()
+                    else:
+                        self._advance_tournament_round()
+                elif event.key == pygame.K_ESCAPE:
+                    self._close_tournament()
+            return None
+
         # B9: Settlement interaction overlay takes priority
         if self.settlement_interaction:
             result = self.settlement_interaction.handle_event(event)
@@ -502,18 +549,210 @@ class CampaignScene:
         self._add_notification(f"Left {faction_display}. You are independent again.")
         self._territory_needs_update = True
 
+    # ------------------------------------------------------------------
+    # D1: Terrain detection for battles
+    # ------------------------------------------------------------------
+
+    def _get_terrain_at_position(self, x, y):
+        """D1: Return terrain type string at a campaign map position."""
+        # Check forests
+        for fx, fy, fr in self._terrain_forests:
+            if distance(x, y, fx, fy) <= fr:
+                return "forest"
+        # Check mountains
+        for mx, my, mr in self._terrain_mountains:
+            if distance(x, y, mx, my) <= mr:
+                return "mountain"
+        # Check deserts
+        for dx, dy, dr in self._terrain_deserts:
+            if distance(x, y, dx, dy) <= dr:
+                return "desert"
+        # Check water/coast
+        for wx, wy, wr in self._terrain_water:
+            if distance(x, y, wx, wy) <= wr:
+                return "coastal"
+        return "plains"
+
+    # ------------------------------------------------------------------
+    # D2: Season system
+    # ------------------------------------------------------------------
+
+    def _get_current_season(self):
+        """D2: Return current season based on day counter."""
+        day_in_cycle = ((self.day - 1) % SEASON_CYCLE_LENGTH) + 1
+        if day_in_cycle <= SEASON_SPRING_END:
+            return SEASON_SPRING
+        elif day_in_cycle <= SEASON_SUMMER_END:
+            return SEASON_SUMMER
+        elif day_in_cycle <= SEASON_AUTUMN_END:
+            return SEASON_AUTUMN
+        else:
+            return SEASON_WINTER
+
+    # ------------------------------------------------------------------
+    # D3: Supply lines
+    # ------------------------------------------------------------------
+
+    def _get_nearest_friendly_settlement_dist(self, army):
+        """D3: Return distance to nearest friendly settlement for an army."""
+        min_dist = float('inf')
+        for s in self.settlements:
+            if s.owner == army.team:
+                d = distance(army.x, army.y, s.x, s.y)
+                if d < min_dist:
+                    min_dist = d
+            # Allied settlements also count
+            elif s.owner is not None and self.diplomacy.are_allied(army.team, s.owner):
+                d = distance(army.x, army.y, s.x, s.y)
+                if d < min_dist:
+                    min_dist = d
+        return min_dist
+
+    def _process_supply_lines(self):
+        """D3: Apply supply line attrition to armies far from friendly territory."""
+        for army in self.armies:
+            dist = self._get_nearest_friendly_settlement_dist(army)
+            if dist > SUPPLY_RANGE:
+                # Morale loss
+                if not hasattr(army, 'campaign_morale'):
+                    army.campaign_morale = 100
+                army.campaign_morale = max(0, army.campaign_morale - SUPPLY_MORALE_LOSS)
+
+                # Desertion chance per squad
+                for sq in army.squads:
+                    if random.random() < SUPPLY_DESERTION_CHANCE and sq.current_count > 1:
+                        sq.current_count -= 1
+
+                if army.is_player:
+                    self._add_notification("Supply lines stretched! Troops suffering attrition.")
+            else:
+                # Slowly recover morale when in supply
+                if hasattr(army, 'campaign_morale'):
+                    army.campaign_morale = min(100, army.campaign_morale + 1)
+
+            # Clean up destroyed squads from desertion
+            army.squads = [sq for sq in army.squads if not sq.is_destroyed]
+
+    # ------------------------------------------------------------------
+    # D5: Tournament system
+    # ------------------------------------------------------------------
+
+    def _process_tournaments(self):
+        """D5: Schedule tournaments at towns periodically."""
+        for s in self.settlements:
+            if s.settlement_type != SettlementType.TOWN:
+                continue
+            if s.name not in self.tournament_towns:
+                # Schedule first tournament
+                self.tournament_towns[s.name] = self.day + random.randint(5, TOURNAMENT_INTERVAL)
+            elif self.day >= self.tournament_towns[s.name]:
+                # Tournament is available - stays until next cycle
+                # Will be rescheduled when player enters or after interval passes
+                if self.day > self.tournament_towns[s.name] + TOURNAMENT_INTERVAL:
+                    # Tournament expired, schedule next
+                    self.tournament_towns[s.name] = self.day + random.randint(5, TOURNAMENT_INTERVAL)
+
+    def _is_tournament_available(self, settlement):
+        """D5: Check if a tournament is currently available at this settlement."""
+        if settlement.settlement_type != SettlementType.TOWN:
+            return False
+        if settlement.name not in self.tournament_towns:
+            return False
+        scheduled = self.tournament_towns[settlement.name]
+        return scheduled <= self.day <= scheduled + TOURNAMENT_INTERVAL
+
+    def _start_tournament(self):
+        """D5: Start a tournament bracket."""
+        self.active_tournament = {
+            "round": 0,
+            "max_rounds": TOURNAMENT_ROUND_COUNT,
+            "gold_won": 0,
+            "results": [],  # list of (round_num, won_bool, description)
+            "finished": False,
+            "victory": False,
+        }
+        self.show_tournament = True
+        self.player_army.gold -= TOURNAMENT_ENTRY_FEE
+
+    def _advance_tournament_round(self):
+        """D5: Auto-resolve one round of the tournament."""
+        if not self.active_tournament or self.active_tournament["finished"]:
+            return
+
+        t = self.active_tournament
+        round_num = t["round"]
+
+        # Calculate player fight strength (simplified)
+        player_strength = self.player_army.army_strength
+        player_level = self.player_army.general_level
+
+        # Opponents get harder each round
+        difficulty_mult = 1.0 + round_num * 0.4
+        opponent_strength = int(player_strength * (0.5 + random.random() * 0.5) * difficulty_mult)
+
+        opponent_names = [
+            "a burly sellsword", "the Iron Fist", "a masked warrior",
+            "the Arena Champion", "a foreign swordsman", "the Red Knight",
+            "a grizzled veteran", "the Swift Blade", "a barbarian chief",
+        ]
+        opponent = random.choice(opponent_names)
+
+        # Resolve fight - player skill + luck
+        player_roll = player_strength + player_level * 20 + random.randint(0, 100)
+        opponent_roll = opponent_strength + random.randint(0, 80)
+
+        won = player_roll > opponent_roll
+        round_reward = TOURNAMENT_ROUND_REWARDS[min(round_num, len(TOURNAMENT_ROUND_REWARDS) - 1)]
+
+        if won:
+            t["gold_won"] += round_reward
+            t["results"].append((round_num + 1, True,
+                                 f"Round {round_num + 1}: Defeated {opponent}! (+{round_reward}g)"))
+            t["round"] += 1
+            if t["round"] >= t["max_rounds"]:
+                t["finished"] = True
+                t["victory"] = True
+                # Award reputation
+                self.player_army.gold += t["gold_won"]
+                self._add_notification(
+                    f"Tournament Victory! Won {t['gold_won']}g!")
+        else:
+            t["results"].append((round_num + 1, False,
+                                 f"Round {round_num + 1}: Defeated by {opponent}."))
+            t["finished"] = True
+            t["victory"] = False
+            # Still get partial gold
+            if t["gold_won"] > 0:
+                self.player_army.gold += t["gold_won"]
+                self._add_notification(
+                    f"Eliminated in round {round_num + 1}. Won {t['gold_won']}g.")
+            else:
+                self._add_notification(f"Eliminated in round {round_num + 1}.")
+
+    def _close_tournament(self):
+        """D5: Close tournament UI and reschedule."""
+        if self.active_tournament and self.settlement_interaction:
+            town_name = self.settlement_interaction.settlement.name
+            self.tournament_towns[town_name] = self.day + TOURNAMENT_INTERVAL
+        self.active_tournament = None
+        self.show_tournament = False
+
     def _process_day(self):
         """Process end-of-day events (replaces _end_turn)."""
         self.day += 1
         self.turn = self.day  # keep compat
 
+        # D2: Get current season for income modifiers
+        season = self._get_current_season()
+        income_mult = SEASON_AUTUMN_INCOME_BONUS if season == SEASON_AUTUMN else 1.0
+
         # Income from settlements (own settlements or faction settlements if member)
         for s in self.settlements:
             if s.owner == 0:
-                self.player_army.gold += s.income
+                self.player_army.gold += int(s.income * income_mult)
             elif self.player_faction is not None and s.owner == self.player_faction:
                 # Vassal gets reduced income from faction settlements
-                self.player_army.gold += s.income // 4
+                self.player_army.gold += int(s.income * income_mult) // 4
 
         # Pay upkeep
         self.player_army.gold -= self.player_army.upkeep
@@ -572,6 +811,24 @@ class CampaignScene:
             if escaped:
                 self._add_notification(
                     "You have escaped captivity! Your army is weakened.")
+
+        # D3: Supply line attrition
+        self._process_supply_lines()
+
+        # D2: Winter mountain attrition
+        if season == SEASON_WINTER:
+            for army in self.armies:
+                terrain = self._get_terrain_at_position(army.x, army.y)
+                if terrain == "mountain":
+                    # Lose soldiers to cold
+                    for sq in army.squads:
+                        if sq.current_count > 1:
+                            sq.current_count = max(1, sq.current_count - SEASON_WINTER_MOUNTAIN_ATTRITION)
+                    if army.is_player:
+                        self._add_notification("Winter in the mountains! Troops suffering from cold.")
+
+        # D5: Tournament scheduling
+        self._process_tournaments()
 
         # Mark fog as needing update
         self._fog_needs_update = True
@@ -698,6 +955,22 @@ class CampaignScene:
     def update(self):
         self.camera.update()
 
+        # D2: Apply seasonal movement penalty
+        season = self._get_current_season()
+        base_speed = CAMPAIGN_MOVE_SPEED
+        if season == SEASON_WINTER:
+            effective_speed = base_speed * SEASON_WINTER_MOVE_PENALTY
+        elif season == SEASON_SUMMER:
+            effective_speed = base_speed
+        else:
+            effective_speed = base_speed
+        # Apply speed to all armies
+        for army in self.armies:
+            army.speed = effective_speed
+            # D2: Desert factions get summer speed bonus
+            if season == SEASON_SUMMER and army.team == 3:  # Desert Raiders
+                army.speed = base_speed * SEASON_SUMMER_DESERT_SPEED_BONUS
+
         # Always update player movement (even when paused for responsiveness)
         self.player_army.update()
 
@@ -707,6 +980,12 @@ class CampaignScene:
 
         # Update notifications
         self.notifications = [(text, timer - 1) for text, timer in self.notifications if timer > 1]
+
+        # D6: Tick prisoner action message timer
+        if getattr(self, 'prisoner_action_timer', 0) > 0:
+            self.prisoner_action_timer -= 1
+            if self.prisoner_action_timer <= 0:
+                self.prisoner_action_msg = None
 
         # Real-time campaign tick (B1)
         if not self.paused:
@@ -738,7 +1017,11 @@ class CampaignScene:
                 continue
             if distance(self.player_army.x, self.player_army.y,
                         army.x, army.y) < 25:
-                self.pending_battle = (self.player_army, army)
+                # D1: Detect terrain at battle location
+                battle_x = (self.player_army.x + army.x) / 2
+                battle_y = (self.player_army.y + army.y) / 2
+                terrain_type = self._get_terrain_at_position(battle_x, battle_y)
+                self.pending_battle = (self.player_army, army, terrain_type)
                 self.paused = True  # Auto-pause on battle contact
                 return
 
@@ -837,9 +1120,60 @@ class CampaignScene:
         if getattr(self, 'show_prisoners', False):
             self._draw_prisoners(surface)
 
+        # D5: Tournament overlay
+        if self.show_tournament and self.active_tournament:
+            self._draw_tournament(surface)
+
         # D6: Player capture overlay (drawn last, blocks everything)
         if self.general_manager.player_capture.is_captured:
             self._draw_capture_overlay(surface)
+
+    def _draw_tournament(self, surface):
+        """D5: Draw tournament bracket overlay."""
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 180))
+        surface.blit(overlay, (0, 0))
+
+        font = pygame.font.SysFont(None, 36)
+        med = pygame.font.SysFont(None, 24)
+        small = pygame.font.SysFont(None, 20)
+
+        panel_w, panel_h = 500, 400
+        px = SCREEN_WIDTH // 2 - panel_w // 2
+        py = SCREEN_HEIGHT // 2 - panel_h // 2
+        pygame.draw.rect(surface, (30, 30, 40), (px, py, panel_w, panel_h))
+        pygame.draw.rect(surface, GOLD, (px, py, panel_w, panel_h), 2)
+
+        t = self.active_tournament
+        title = font.render("TOURNAMENT", True, GOLD)
+        surface.blit(title, (px + panel_w // 2 - title.get_width() // 2, py + 15))
+
+        y = py + 60
+        # Show results
+        for rnd, won, desc in t["results"]:
+            color = (100, 200, 100) if won else (200, 100, 100)
+            rt = small.render(desc, True, color)
+            surface.blit(rt, (px + 20, y))
+            y += 25
+
+        y += 10
+        if t["finished"]:
+            if t["victory"]:
+                result_text = med.render(f"CHAMPION! Total winnings: {t['gold_won']}g", True, GOLD)
+            else:
+                result_text = med.render(f"Eliminated. Winnings: {t['gold_won']}g", True, (200, 150, 100))
+            surface.blit(result_text, (px + 20, y))
+            y += 35
+            close_text = med.render("[ENTER] Leave Tournament", True, WHITE)
+            if pygame.time.get_ticks() % 1000 < 700:
+                surface.blit(close_text, (px + panel_w // 2 - close_text.get_width() // 2, y))
+        else:
+            round_text = med.render(f"Round {t['round'] + 1} of {t['max_rounds']}", True, WHITE)
+            surface.blit(round_text, (px + 20, y))
+            y += 30
+            fight_text = med.render("[ENTER] Fight Next Round", True, GOLD)
+            if pygame.time.get_ticks() % 1000 < 700:
+                surface.blit(fight_text, (px + panel_w // 2 - fight_text.get_width() // 2, y))
 
     def _draw_territory_borders(self, surface):
         """B4: Draw faction territory as colored regions around settlements."""
@@ -989,16 +1323,24 @@ class CampaignScene:
         bar.fill((0, 0, 0, 200))
         surface.blit(bar, (0, 0))
 
-        # Day counter (C2: replaces turn counter)
-        day_text = font.render(f"Day {self.day}", True, WHITE)
+        # D2: Day counter with season display
+        season = self._get_current_season()
+        season_colors = {
+            SEASON_SPRING: (100, 200, 100),
+            SEASON_SUMMER: (220, 200, 50),
+            SEASON_AUTUMN: (200, 140, 50),
+            SEASON_WINTER: (150, 200, 255),
+        }
+        season_color = season_colors.get(season, WHITE)
+        day_text = font.render(f"Day {self.day} - {season.capitalize()}", True, season_color)
         surface.blit(day_text, (10, 8))
 
         # Gold
         gold_text = font.render(f"Gold: {self.player_army.gold}", True, GOLD)
-        surface.blit(gold_text, (90, 8))
+        surface.blit(gold_text, (150, 8))
 
         # Speed controls (C2)
-        speed_x = 200
+        speed_x = 260
         # Pause button
         pause_color = (200, 80, 80) if self.paused else (80, 80, 80)
         pygame.draw.rect(surface, pause_color, (speed_x, 4, 35, 28))
@@ -1095,7 +1437,8 @@ class CampaignScene:
 
     def _draw_settlement_info(self, surface, font, small_font):
         s = self.selected_settlement
-        panel = pygame.Surface((250, 140), pygame.SRCALPHA)
+        panel_h = 160 if self._is_tournament_available(s) else 140
+        panel = pygame.Surface((250, panel_h), pygame.SRCALPHA)
         panel.fill((0, 0, 0, 180))
         surface.blit(panel, (SCREEN_WIDTH - 260, 45))
 
@@ -1125,6 +1468,12 @@ class CampaignScene:
             if s.owner is not None and s.owner != 0 else "",
             True, (180, 180, 180))
         surface.blit(state_text, (x + 20, y))
+        y += 20
+
+        # D5: Tournament availability
+        if self._is_tournament_available(s):
+            tourney_text = small_font.render("Tournament available!", True, (255, 215, 0))
+            surface.blit(tourney_text, (x, y))
 
     def _draw_diplomacy(self, surface):
         """Draw diplomacy overview panel."""

@@ -118,6 +118,12 @@ class Game:
                                             player_is_attacker=True)
                 else:
                     self.battle = BattleScene(player_data, enemy_data)
+                # D6: Apply intimidation bonus from executions
+                if self.campaign:
+                    intim = self.campaign.general_manager.consume_intimidation_bonus()
+                    if intim > 0:
+                        for sq in self.battle.enemy_squads:
+                            sq.morale = max(0, sq.morale - intim)
                 self.state = GameState.BATTLE
             elif event.key == pygame.K_ESCAPE or event.key == pygame.K_r:
                 # Retreat - move player away

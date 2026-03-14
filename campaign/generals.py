@@ -8,7 +8,7 @@ import random
 from core.settings import (
     LOYALTY_DEFAULT, LOYALTY_MIN, LOYALTY_MAX,
     LOYALTY_BETRAY_THRESHOLD, LOYALTY_BETRAY_CHANCE_BASE,
-    LOYALTY_BETRAY_AMBITIOUS_MULT, LOYALTY_BETRAY_LOYAL_MULT,
+    LOYALTY_BETRAY_AMBITIOUS_MULT, LOYALTY_BETRAY_LOYAL_MULT, LOYALTY_BETRAY_GREEDY_MULT,
     LOYALTY_BATTLE_WIN_BONUS, LOYALTY_BATTLE_LOSS_PENALTY,
     PERSUASION_RANGE,
     BRIBE_COST_BASE, BRIBE_LOYALTY_GAIN, BRIBE_FACTION_LOYALTY_LOSS,
@@ -203,7 +203,7 @@ class GeneralManager:
             elif personality == "loyal":
                 chance *= LOYALTY_BETRAY_LOYAL_MULT
             elif personality == "greedy":
-                chance *= 1.5
+                chance *= LOYALTY_BETRAY_GREEDY_MULT
 
             if random.random() < chance:
                 # Decide: defect to another faction or go independent
