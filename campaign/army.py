@@ -7,6 +7,7 @@ from core.settings import (
     ARMY_ICON_RADIUS, CAMPAIGN_MOVE_SPEED,
     TEAM_COLORS, TEAM_COLORS_LIGHT, WHITE, GOLD, DARK_GREY,
     STARTING_GOLD,
+    ARMY_SIZE_BASE, ARMY_SIZE_PER_LEVEL, ARMY_SIZE_MAX,
 )
 from core.utils import distance, normalize
 from data.unit_types import (
@@ -114,6 +115,17 @@ class Army:
     @property
     def upkeep(self):
         return sum(sq.unit_stats.upkeep for sq in self.squads)
+
+    @property
+    def army_size_limit(self):
+        """B11: Army size limit based on general level."""
+        return min(ARMY_SIZE_MAX,
+                   ARMY_SIZE_BASE + (self.general_level - 1) * ARMY_SIZE_PER_LEVEL)
+
+    @property
+    def can_recruit(self):
+        """B11: Check if army can accept more soldiers."""
+        return self.total_soldiers < self.army_size_limit
 
     def add_squad(self, unit_stats):
         self.squads.append(CampaignSquad(unit_stats))
@@ -230,7 +242,7 @@ class Army:
         texts = [
             (font, f"{self.name}", GOLD),
             (small_font, f"Strength: {self.army_strength}", WHITE),
-            (small_font, f"Soldiers: {self.total_soldiers}", WHITE),
+            (small_font, f"Soldiers: {self.total_soldiers}/{self.army_size_limit}", WHITE),
             (small_font, f"Gold: {self.gold}", (255, 215, 0)),
             (small_font, f"Upkeep: {self.upkeep}/turn", (200, 150, 100)),
             (small_font, f"General: {self.general_name} ({self.general_stats.name}) Lv{self.general_level}", WHITE),
@@ -253,14 +265,14 @@ class Army:
 
 
 def create_default_player_army():
-    army = Army("Your Warband", 0, 400, 500, is_player=True)
+    """B2: Player starts as independent mercenary lord with a small warband."""
+    army = Army("Your Warband", 0, 800, 800, is_player=True)
     army.gold = STARTING_GOLD
     army.general_stats = GENERAL_COMMANDER
-    army.add_squad(SWORDSMEN)
-    army.add_squad(SWORDSMEN)
-    army.add_squad(SPEARMEN)
-    army.add_squad(ARCHERS)
-    army.add_squad(MILITIA)
+    # Small starting force - mercenary feel (fits within 60 soldier limit)
+    army.add_squad(SWORDSMEN)   # 24
+    army.add_squad(ARCHERS)     # 20
+    army.add_squad(LIGHT_CAVALRY)  # 12 = 56 total
     return army
 
 

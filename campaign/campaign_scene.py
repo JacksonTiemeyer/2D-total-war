@@ -6,6 +6,9 @@ Features:
 - Faction territory borders with colored overlays (B4)
 - Campaign fog of war with vision radius (B13)
 - Improved HUD with day counter, speed, notifications (C2)
+- Interactable settlements with tavern/recruit/rest/garrison (B9/C3)
+- Factionless player start as independent lord (B2)
+- Army size limits tied to general level (B11)
 """
 
 import math
@@ -21,6 +24,8 @@ from core.settings import (
     WHITE, BLACK, GREY, DARK_GREY, GOLD, YELLOW,
     DARK_GREEN, BROWN, SAND, LIGHT_BLUE,
     INCOME_PER_SETTLEMENT,
+    FACTION_JOIN_THRESHOLD, FACTION_LEAVE_PENALTY,
+    REST_COST_PER_DAY, REST_REPLENISH_RATE,
 )
 from core.camera import Camera
 from core.utils import distance, point_in_rect
@@ -28,8 +33,9 @@ from campaign.settlement import Settlement, SettlementType
 from campaign.army import (
     Army, create_default_player_army, create_enemy_army,
 )
+from campaign.settlement_ui import SettlementInteraction
 from data.unit_types import ALL_RECRUITABLE, GENERAL_ROSTER
-from campaign.faction import FACTION_ROSTER
+from campaign.faction import FACTION_ROSTER, FACTION_BY_TEAM
 from campaign.diplomacy import DiplomacyManager, DiplomacyState
 
 
@@ -56,6 +62,12 @@ class CampaignScene:
         self.recruitment_settlement = None
         self.pending_battle = None  # (player_army, enemy_army) tuple
 
+        # B9/C3: Settlement interaction
+        self.settlement_interaction = None  # SettlementInteraction instance or None
+
+        # B2: Player faction allegiance (None = independent)
+        self.player_faction = None
+
         # Notification feed (C2)
         self.notifications = []  # list of (text, timer)
         self.NOTIFICATION_DURATION = 300  # 5 seconds at 60fps
@@ -63,8 +75,9 @@ class CampaignScene:
         # Faction & diplomacy
         self.factions = FACTION_ROSTER[:]
         self.diplomacy = DiplomacyManager(self.factions)
-        # Start player at war with Iron Empire (team 1)
-        self.diplomacy.declare_war(0, 1)
+        # B2: Player starts neutral with all factions (independent lord)
+        for f in self.factions:
+            self.diplomacy.set_relation(0, f.team, 0)
 
         # Fog of war state (B13)
         self._fog_surface = None
@@ -80,7 +93,7 @@ class CampaignScene:
         self._income_timer = 0
 
         self._generate_world()
-        self._add_notification("Your campaign begins. You are at war with the Iron Empire!")
+        self._add_notification("You begin as an independent lord. Visit settlements to recruit and trade!")
 
     def _add_notification(self, text):
         """Add a notification to the feed."""
@@ -90,11 +103,11 @@ class CampaignScene:
         """Generate campaign map with 35 settlements across 8 factions."""
         # B4: Expanded settlement data - 35 settlements
         settlement_data = [
-            # Player (team 0) - 4 settlements, western region
-            ("Ironhold", 350, 400, SettlementType.CASTLE, 0),
-            ("Millbrook", 500, 250, SettlementType.VILLAGE, 0),
-            ("King's Landing", 550, 600, SettlementType.TOWN, 0),
-            ("Brightwater", 300, 700, SettlementType.VILLAGE, 0),
+            # B2: Western settlements - neutral/unclaimed (player starts with nothing)
+            ("Ironhold", 350, 400, SettlementType.CASTLE, None),
+            ("Millbrook", 500, 250, SettlementType.VILLAGE, None),
+            ("King's Landing", 550, 600, SettlementType.TOWN, None),
+            ("Brightwater", 300, 700, SettlementType.VILLAGE, None),
 
             # Iron Empire (team 1) - 5 settlements, east-central
             ("Thornkeep", 2200, 700, SettlementType.CASTLE, 1),
@@ -203,6 +216,13 @@ class CampaignScene:
             self.armies.append(army)
 
     def handle_event(self, event):
+        # B9: Settlement interaction overlay takes priority
+        if self.settlement_interaction:
+            result = self.settlement_interaction.handle_event(event)
+            if result:
+                self._process_settlement_action(result)
+            return None
+
         if self.show_recruitment:
             return self._handle_recruitment_event(event)
         if self.show_diplomacy:
@@ -227,6 +247,8 @@ class CampaignScene:
                 self.campaign_speed = CAMPAIGN_SPEED_3X
                 self.paused = False
                 self._add_notification("Speed: 4x")
+            elif event.key == pygame.K_e:
+                self._try_enter_settlement()
             elif event.key == pygame.K_r:
                 self._try_open_recruitment()
             elif event.key == pygame.K_g:
@@ -300,13 +322,51 @@ class CampaignScene:
         wx, wy = self.camera.screen_to_world(*pos)
         self.player_army.give_move_order(wx, wy)
 
-    def _try_open_recruitment(self):
+    def _try_enter_settlement(self):
+        """B9: Try to enter a nearby settlement for interaction."""
         for s in self.settlements:
-            if s.owner == 0 and distance(
-                    self.player_army.x, self.player_army.y, s.x, s.y) < 60:
-                self.show_recruitment = True
-                self.recruitment_settlement = s
+            if distance(self.player_army.x, self.player_army.y, s.x, s.y) < 60:
+                # Can't enter hostile settlements
+                if s.owner is not None and self.diplomacy.are_at_war(0, s.owner):
+                    self._add_notification(f"Cannot enter {s.name} - at war!")
+                    return
+                self.settlement_interaction = SettlementInteraction(
+                    s, self.player_army, self.diplomacy, self.factions,
+                    self.day, self.settlements, self.armies)
+                self.paused = True
+                self._add_notification(f"Entered {s.name}")
                 return
+        self._add_notification("No settlement nearby. Move closer to enter.")
+
+    def _process_settlement_action(self, action):
+        """Handle actions returned from SettlementInteraction."""
+        act = action.get("action")
+        if act == "leave":
+            self.settlement_interaction = None
+            self.paused = False
+        elif act == "advance_day":
+            days = action.get("days", 1)
+            for _ in range(days):
+                self._process_day()
+            self._add_notification(f"Rested for {days} day(s).")
+            # Update the settlement_interaction's day reference
+            if self.settlement_interaction:
+                self.settlement_interaction.day = self.day
+
+    def _try_open_recruitment(self):
+        # B9: If near a settlement, open settlement interaction instead
+        for s in self.settlements:
+            if distance(self.player_army.x, self.player_army.y, s.x, s.y) < 60:
+                if s.owner is not None and self.diplomacy.are_at_war(0, s.owner):
+                    self._add_notification(f"Cannot recruit at {s.name} - at war!")
+                    return
+                self.settlement_interaction = SettlementInteraction(
+                    s, self.player_army, self.diplomacy, self.factions,
+                    self.day, self.settlements, self.armies)
+                self.settlement_interaction.current_tab = "recruit"
+                self.paused = True
+                return
+        self._add_notification("No settlement nearby for recruitment.")
 
     def _handle_recruitment_event(self, event):
         if event.type == pygame.KEYDOWN:
@@ -372,30 +432,67 @@ class CampaignScene:
                 if idx < len(non_player):
                     target = non_player[idx]
                     state = self.diplomacy.get_state(0, target.team)
+                    rel = self.diplomacy.get_relation(0, target.team)
                     if state == DiplomacyState.WAR:
                         if self.diplomacy.propose_peace(0, target.team):
                             self._add_notification(f"Peace with {target.name}!")
                         else:
                             self._add_notification(f"{target.name} rejected peace.")
                     elif state in (DiplomacyState.FRIENDLY,):
-                        if self.diplomacy.propose_alliance(0, target.team):
+                        # B2: Join faction if rep high enough and player is independent
+                        if self.player_faction is None and rel >= FACTION_JOIN_THRESHOLD:
+                            self._join_faction(target)
+                        elif self.diplomacy.propose_alliance(0, target.team):
                             self._add_notification(f"Allied with {target.name}!")
                         else:
                             self._add_notification(f"{target.name} declined alliance.")
                     elif state in (DiplomacyState.NEUTRAL, DiplomacyState.HOSTILE):
                         self.diplomacy.declare_war(0, target.team)
                         self._add_notification(f"War declared on {target.name}!")
+            # B2: Leave faction with 'L' key
+            if event.key == pygame.K_l and self.player_faction is not None:
+                self._leave_faction()
         return None
+
+    def _join_faction(self, faction):
+        """B2: Player joins a faction as a vassal."""
+        self.player_faction = faction.team
+        # Transfer player settlements to faction
+        for s in self.settlements:
+            if s.owner == 0:
+                s.owner = faction.team
+        # Set allied relations
+        self.diplomacy.set_relation(0, faction.team, 70)
+        # Inherit faction's wars
+        for other_f in self.factions:
+            if other_f.team != faction.team and self.diplomacy.are_at_war(faction.team, other_f.team):
+                self.diplomacy.declare_war(0, other_f.team)
+        self._add_notification(f"Joined {faction.name}! You are now a vassal.")
+        self._territory_needs_update = True
+
+    def _leave_faction(self):
+        """B2: Player leaves their current faction."""
+        if self.player_faction is None:
+            return
+        faction_name = FACTION_BY_TEAM.get(self.player_faction)
+        faction_display = faction_name.name if faction_name else "faction"
+        self.diplomacy.modify_relation(0, self.player_faction, FACTION_LEAVE_PENALTY)
+        self.player_faction = None
+        self._add_notification(f"Left {faction_display}. You are independent again.")
+        self._territory_needs_update = True
 
     def _process_day(self):
         """Process end-of-day events (replaces _end_turn)."""
         self.day += 1
         self.turn = self.day  # keep compat
 
-        # Income from settlements
+        # Income from settlements (own settlements or faction settlements if member)
         for s in self.settlements:
             if s.owner == 0:
                 self.player_army.gold += s.income
+            elif self.player_faction is not None and s.owner == self.player_faction:
+                # Vassal gets reduced income from faction settlements
+                self.player_army.gold += s.income // 4
 
         # Pay upkeep
         self.player_army.gold -= self.player_army.upkeep
@@ -460,13 +557,18 @@ class CampaignScene:
         for s in self.settlements:
             for army in self.armies:
                 if distance(army.x, army.y, s.x, s.y) < 40:
-                    if s.owner != army.team:
-                        if self.diplomacy.are_at_war(army.team, s.owner if s.owner is not None else -1):
+                    capture_team = army.team
+                    # B2: Player captures go to player faction if they have one
+                    if army.is_player and self.player_faction is not None:
+                        capture_team = self.player_faction
+                    if s.owner != capture_team:
+                        target_owner = s.owner if s.owner is not None else -1
+                        if self.diplomacy.are_at_war(army.team, target_owner) or s.owner is None:
                             if army.army_strength > s.garrison_strength:
-                                old_owner = s.owner
-                                s.owner = army.team
+                                s.owner = capture_team
                                 faction_names = {f.team: f.name for f in self.factions}
-                                captor = faction_names.get(army.team, "Unknown")
+                                faction_names[0] = "You"
+                                captor = faction_names.get(capture_team, "Unknown")
                                 self._add_notification(f"{captor} captured {s.name}!")
                                 self._territory_needs_update = True
 
@@ -620,6 +722,11 @@ class CampaignScene:
 
         # HUD (drawn on top of fog)
         self._draw_hud(surface)
+
+        # B9: Settlement interaction overlay
+        if self.settlement_interaction:
+            self.settlement_interaction.draw(surface)
+            return
 
         # Recruitment overlay
         if self.show_recruitment:
@@ -783,10 +890,14 @@ class CampaignScene:
             surface.blit(spd_text, (speed_x + 6, 10))
             speed_x += 35
 
-        # Army info
+        # Army info with B2 faction status and B11 army limit
+        faction_str = "Independent"
+        if self.player_faction is not None:
+            f_obj = FACTION_BY_TEAM.get(self.player_faction)
+            faction_str = f_obj.name if f_obj else f"Team {self.player_faction}"
         army_text = font.render(
-            f"Army: {self.player_army.total_soldiers} | "
-            f"Str: {self.player_army.army_strength} | "
+            f"{faction_str} | "
+            f"Army: {self.player_army.total_soldiers}/{self.player_army.army_size_limit} | "
             f"Upkeep: {self.player_army.upkeep}/day",
             True, WHITE)
         surface.blit(army_text, (speed_x + 20, 8))
@@ -807,8 +918,8 @@ class CampaignScene:
 
         # Controls
         ctrl_text = small_font.render(
-            "[RMB] Move  [R] Recruit  [G] General  [D] Diplomacy  "
-            "[SPACE] Pause  [1/2/3] Speed  [Ctrl+S] Save",
+            "[RMB] Move  [E] Enter Settlement  [R] Recruit  [G] General  [D] Diplomacy  "
+            "[SPACE] Pause  [1/2/3] Speed",
             True, (180, 180, 180))
         surface.blit(ctrl_text, (10, SCREEN_HEIGHT - 30))
 
@@ -1009,7 +1120,10 @@ class CampaignScene:
             if state == DiplomacyState.WAR:
                 hint = tiny.render(f"  Press [{i+1}] to propose peace", True, (150, 150, 150))
             elif state == DiplomacyState.FRIENDLY:
-                hint = tiny.render(f"  Press [{i+1}] to propose alliance", True, (150, 150, 150))
+                if self.player_faction is None and rel >= FACTION_JOIN_THRESHOLD:
+                    hint = tiny.render(f"  Press [{i+1}] to JOIN this faction!", True, (100, 255, 100))
+                else:
+                    hint = tiny.render(f"  Press [{i+1}] to propose alliance", True, (150, 150, 150))
             elif state in (DiplomacyState.NEUTRAL, DiplomacyState.HOSTILE):
                 hint = tiny.render(f"  Press [{i+1}] to declare war", True, (150, 150, 150))
             else:
@@ -1024,6 +1138,16 @@ class CampaignScene:
                 True, (140, 140, 140))
             surface.blit(info, (panel_x + 30, y))
             y += 26
+
+        # B2: Show current faction status
+        if self.player_faction is not None:
+            f_obj = FACTION_BY_TEAM.get(self.player_faction)
+            f_name = f_obj.name if f_obj else "Unknown"
+            status = small.render(f"Current Faction: {f_name}  [L] Leave Faction", True, (100, 200, 255))
+            surface.blit(status, (panel_x + 15, y + 5))
+        else:
+            status = small.render("You are Independent. Reach +50 rep to join a faction.", True, (220, 160, 60))
+            surface.blit(status, (panel_x + 15, y + 5))
 
         footer = tiny.render("[ESC] Close  |  Press number to interact", True, (150, 150, 150))
         surface.blit(footer, (panel_x + panel_w // 2 - footer.get_width() // 2,

@@ -204,3 +204,19 @@ CAMPAIGN_MOVE_SPEED = 3
 RECRUITMENT_COST_MULTIPLIER = 1.0
 INCOME_PER_SETTLEMENT = 100
 STARTING_GOLD = 500
+
+# B11: Army size limits (total soldiers)
+ARMY_SIZE_BASE = 60           # starting army limit
+ARMY_SIZE_PER_LEVEL = 15      # additional capacity per general level
+ARMY_SIZE_MAX = 300            # hard cap
+
+# B2: Faction joining
+FACTION_JOIN_THRESHOLD = 50    # reputation needed to join a faction
+FACTION_LEAVE_PENALTY = -30    # reputation hit when leaving
+
+# B9: Settlement interaction
+REST_COST_PER_DAY = 10         # gold cost per day of rest
+REST_REPLENISH_RATE = 0.2      # fraction of missing soldiers restored per day
+MERCENARY_COST_MULTIPLIER = 1.5  # mercs cost 50% more
+TAVERN_RUMORS_COUNT = 3
+TAVERN_MERCS_COUNT = 3
