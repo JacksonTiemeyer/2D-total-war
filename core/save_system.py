@@ -7,14 +7,18 @@ from pathlib import Path
 from data.unit_types import (
     ALL_RECRUITABLE, GENERAL_ROSTER,
     GENERAL_COMMANDER, GENERAL_CHAMPION, GENERAL_STRATEGIST,
+    FACTION_SPECIALTY_UNITS,
 )
 
 SAVE_DIR = os.path.join(str(Path.home()), ".2d-total-war")
 SAVE_FILE = os.path.join(SAVE_DIR, "save.json")
-SAVE_VERSION = 1
+SAVE_VERSION = 2  # Bumped for Phase 2 additions
 
-# Build name -> UnitStats lookup
+# Build name -> UnitStats lookup (includes specialty units)
 _UNIT_LOOKUP = {u.name: u for u in ALL_RECRUITABLE}
+for units in FACTION_SPECIALTY_UNITS.values():
+    for u in units:
+        _UNIT_LOOKUP[u.name] = u
 _GENERAL_LOOKUP = {u.name: u for u in GENERAL_ROSTER}
 
 
@@ -30,19 +34,34 @@ def save_exists():
 
 def save_campaign(campaign_scene):
     """Serialize the full campaign state to JSON."""
-    from campaign.army import CampaignSquad
-
     data = {
         "version": SAVE_VERSION,
+        # B1: Real-time campaign state
+        "day": campaign_scene.day,
+        "day_ticks": campaign_scene.day_ticks,
+        "campaign_speed": campaign_scene.campaign_speed,
+        "paused": campaign_scene.paused,
         "turn": campaign_scene.turn,
+        # B2: Player faction
+        "player_faction": campaign_scene.player_faction,
+        # Armies
         "player_army": _serialize_army(campaign_scene.player_army),
         "enemy_armies": [
             _serialize_army(a) for a in campaign_scene.armies
             if not a.is_player
         ],
+        # Settlements
         "settlements": [
             _serialize_settlement(s) for s in campaign_scene.settlements
         ],
+        # Diplomacy
+        "diplomacy": campaign_scene.diplomacy.serialize(),
+        # Camera position
+        "camera": {
+            "x": campaign_scene.camera.x,
+            "y": campaign_scene.camera.y,
+            "zoom": campaign_scene.camera.zoom,
+        },
     }
 
     os.makedirs(SAVE_DIR, exist_ok=True)
@@ -57,7 +76,8 @@ def load_campaign():
         return None
     with open(SAVE_FILE, "r") as f:
         data = json.load(f)
-    if data.get("version", 0) != SAVE_VERSION:
+    # Accept version 1 (legacy) and 2 (current)
+    if data.get("version", 0) not in (1, 2):
         return None
     return data
 
@@ -111,19 +131,62 @@ def restore_campaign_scene(data):
     from campaign.campaign_scene import CampaignScene
     from campaign.army import Army, CampaignSquad
     from campaign.settlement import Settlement
+    from campaign.faction import FACTION_ROSTER
+    from campaign.diplomacy import DiplomacyManager
 
+    # Create a fresh scene, then override with saved data
     scene = CampaignScene.__new__(CampaignScene)
+
     # Re-init camera
     from core.camera import Camera
-    from core.settings import CAMPAIGN_MAP_WIDTH, CAMPAIGN_MAP_HEIGHT
+    from core.settings import (
+        CAMPAIGN_MAP_WIDTH, CAMPAIGN_MAP_HEIGHT,
+        CAMPAIGN_SPEED_1X, CAMPAIGN_TICKS_PER_DAY,
+    )
     scene.camera = Camera(CAMPAIGN_MAP_WIDTH, CAMPAIGN_MAP_HEIGHT)
-    scene.camera.center_on(CAMPAIGN_MAP_WIDTH / 2, CAMPAIGN_MAP_HEIGHT / 2)
+    cam_data = data.get("camera", {})
+    scene.camera.x = cam_data.get("x", CAMPAIGN_MAP_WIDTH / 2)
+    scene.camera.y = cam_data.get("y", CAMPAIGN_MAP_HEIGHT / 2)
+    scene.camera.zoom = cam_data.get("zoom", 1.0)
 
-    scene.turn = data["turn"]
+    # B1: Real-time campaign state
+    scene.day = data.get("day", data.get("turn", 1))
+    scene.day_ticks = data.get("day_ticks", 0)
+    scene.campaign_speed = data.get("campaign_speed", CAMPAIGN_SPEED_1X)
+    scene.paused = data.get("paused", False)
+    scene.turn = data.get("turn", scene.day)
+
+    # B2: Player faction
+    scene.player_faction = data.get("player_faction", None)
+
+    # UI state
     scene.selected_settlement = None
     scene.show_recruitment = False
+    scene.show_diplomacy = False
     scene.recruitment_settlement = None
     scene.pending_battle = None
+    scene.settlement_interaction = None
+
+    # Notifications
+    scene.notifications = []
+    scene.NOTIFICATION_DURATION = 300
+
+    # Fog/territory cache flags
+    scene._fog_surface = None
+    scene._fog_needs_update = True
+    scene._territory_surface = None
+    scene._territory_needs_update = True
+
+    # AI timers
+    scene._ai_tick_timer = 0
+    scene._ai_diplomacy_timer = 0
+    scene._income_timer = 0
+
+    # Factions & diplomacy
+    scene.factions = FACTION_ROSTER[:]
+    scene.diplomacy = DiplomacyManager(scene.factions)
+    if "diplomacy" in data:
+        scene.diplomacy.deserialize(data["diplomacy"])
 
     # Restore settlements
     scene.settlements = []
@@ -147,6 +210,9 @@ def restore_campaign_scene(data):
     for ea in data.get("enemy_armies", []):
         army = _restore_army(ea)
         scene.armies.append(army)
+
+    scene._add_notification = lambda text: scene.notifications.append((text, 300))
+    scene._add_notification("Campaign loaded!")
 
     return scene
 

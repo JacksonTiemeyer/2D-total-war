@@ -66,7 +66,7 @@ class Squad:
         self.target_x = x
         self.target_y = y
         self.state = SquadState.IDLE
-        self.morale = 100.0  # vet morale bonus applied after vet_data is set
+        self.morale = 100.0
         self.selected = False
         self.target_squad = None
         self.is_cavalry = unit_stats.speed >= 3.5
@@ -94,6 +94,8 @@ class Squad:
         self.vet_exhaustion_mult = self.vet_data.get("exhaustion_mult", 1.0)
         self.vet_rank_name = self.vet_data.get("rank_name", "Raw")
         self.vet_rank_index = self.vet_data.get("rank_index", 0)
+        # Apply veterancy morale bonus to starting morale
+        self.morale = min(100.0, self.morale + self.vet_morale_bonus)
 
         # Exhaustion
         self.exhaustion = 0.0
@@ -357,6 +359,9 @@ class Squad:
         # Morale recovery when idle (reduced by exhaustion)
         if self.state == SquadState.IDLE and self.morale < 100:
             recovery = MORALE_RECOVERY_RATE * (1.0 - self.exhaustion / EXHAUSTION_MAX * 0.5)
+            # Inspiring Presence ability: +50% morale recovery
+            if getattr(self, '_inspired', False):
+                recovery *= 1.5
             self.morale = min(100, self.morale + recovery)
 
         # Track idle time for bracing
@@ -377,7 +382,9 @@ class Squad:
             self._do_rout()
             return
         if self.morale <= MORALE_ROUT_THRESHOLD:
-            self.state = SquadState.ROUTED
+            # Hold the Line ability prevents routing
+            if not getattr(self, '_hold_the_line', False):
+                self.state = SquadState.ROUTED
             return
         if self.morale <= MORALE_BREAK_THRESHOLD and self.state != SquadState.BROKEN:
             self.state = SquadState.BROKEN
@@ -605,6 +612,9 @@ class Squad:
             return
         self.facing_angle = angle_between(self.x, self.y, tx, ty)
         ranged_dmg_mult = self.terrain_mods.get("ranged_damage_mult", 1.0) * self.vet_atk_mult
+        # Precision Volley ability: +30% ranged damage
+        if getattr(self, '_precision_volley', False):
+            ranged_dmg_mult *= 1.3
         ranged_acc_mult = self.terrain_mods.get("ranged_accuracy_mult", 1.0)
         # Target in forest also reduces accuracy
         target_terrain = self.target_squad.terrain_mods.get("terrain_type")

@@ -25,7 +25,7 @@ from core.settings import (
     DARK_GREEN, BROWN, SAND, LIGHT_BLUE,
     INCOME_PER_SETTLEMENT,
     FACTION_JOIN_THRESHOLD, FACTION_LEAVE_PENALTY,
-    REST_COST_PER_DAY, REST_REPLENISH_RATE,
+    REST_COST_PER_DAY,
 )
 from core.camera import Camera
 from core.utils import distance, point_in_rect
@@ -57,9 +57,7 @@ class CampaignScene:
         self.armies = [self.player_army]
         self.settlements = []
         self.selected_settlement = None
-        self.show_recruitment = False
         self.show_diplomacy = False
-        self.recruitment_settlement = None
         self.pending_battle = None  # (player_army, enemy_army) tuple
 
         # B9/C3: Settlement interaction
@@ -223,8 +221,6 @@ class CampaignScene:
                 self._process_settlement_action(result)
             return None
 
-        if self.show_recruitment:
-            return self._handle_recruitment_event(event)
         if self.show_diplomacy:
             return self._handle_diplomacy_event(event)
 
@@ -367,53 +363,6 @@ class CampaignScene:
                 self.paused = True
                 return
         self._add_notification("No settlement nearby for recruitment.")
-
-    def _handle_recruitment_event(self, event):
-        if event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_ESCAPE:
-                self.show_recruitment = False
-                return None
-            if pygame.K_1 <= event.key <= pygame.K_9:
-                idx = event.key - pygame.K_1
-                self._recruit_unit(idx)
-
-        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            mx, my = event.pos
-            panel_x = SCREEN_WIDTH // 2 - 200
-            panel_y = 100
-
-            # Available recruits
-            for i, unit in enumerate(self.recruitment_settlement.available_recruits):
-                btn_y = panel_y + 60 + i * 35
-                if point_in_rect(mx, my, panel_x + 10, btn_y, 380, 30):
-                    self._recruit_unit(i)
-                    return None
-
-            # Disband buttons (current army)
-            disband_y = panel_y + 60 + len(self.recruitment_settlement.available_recruits) * 35 + 50
-            for i in range(len(self.player_army.squads)):
-                btn_y = disband_y + i * 25
-                if point_in_rect(mx, my, panel_x + 340, btn_y, 50, 20):
-                    self.player_army.remove_squad(i)
-                    return None
-
-            # Close button
-            if point_in_rect(mx, my, panel_x + 350, panel_y, 30, 30):
-                self.show_recruitment = False
-
-        return None
-
-    def _recruit_unit(self, index):
-        if not self.recruitment_settlement:
-            return
-        recruits = self.recruitment_settlement.available_recruits
-        if index >= len(recruits):
-            return
-        unit = recruits[index]
-        if self.player_army.gold >= unit.cost:
-            self.player_army.gold -= unit.cost
-            self.player_army.add_squad(unit)
-            recruits.pop(index)
 
     def _cycle_general(self):
         current = self.player_army.general_stats
@@ -562,8 +511,7 @@ class CampaignScene:
                     if army.is_player and self.player_faction is not None:
                         capture_team = self.player_faction
                     if s.owner != capture_team:
-                        target_owner = s.owner if s.owner is not None else -1
-                        if self.diplomacy.are_at_war(army.team, target_owner) or s.owner is None:
+                        if s.owner is None or self.diplomacy.are_at_war(army.team, s.owner):
                             if army.army_strength > s.garrison_strength:
                                 s.owner = capture_team
                                 faction_names = {f.team: f.name for f in self.factions}
@@ -668,7 +616,7 @@ class CampaignScene:
             return True
         # Visible around owned/allied settlements
         for s in self.settlements:
-            if s.owner == 0 or self.diplomacy.are_allied(0, s.owner if s.owner is not None else -1):
+            if s.owner == 0 or (s.owner is not None and self.diplomacy.are_allied(0, s.owner)):
                 if distance(s.x, s.y, x, y) <= CAMPAIGN_SETTLEMENT_VISION:
                     return True
         return False
@@ -727,10 +675,6 @@ class CampaignScene:
         if self.settlement_interaction:
             self.settlement_interaction.draw(surface)
             return
-
-        # Recruitment overlay
-        if self.show_recruitment:
-            self._draw_recruitment(surface)
 
         # Diplomacy overlay
         if self.show_diplomacy:
@@ -993,78 +937,10 @@ class CampaignScene:
         pygame.draw.rect(surface, team_color, (x, y, 15, 15))
         pygame.draw.rect(surface, WHITE, (x, y, 15, 15), 1)
         state_text = small_font.render(
-            f" {self.diplomacy.get_state(0, s.owner if s.owner is not None else -1).upper()}"
-            if s.owner != 0 and s.owner is not None else "",
+            f" {self.diplomacy.get_state(0, s.owner).upper()}"
+            if s.owner is not None and s.owner != 0 else "",
             True, (180, 180, 180))
         surface.blit(state_text, (x + 20, y))
-
-    def _draw_recruitment(self, surface):
-        if not self.recruitment_settlement:
-            return
-        s = self.recruitment_settlement
-
-        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
-        overlay.fill((0, 0, 0, 140))
-        surface.blit(overlay, (0, 0))
-
-        panel_w, panel_h = 420, 500
-        panel_x = SCREEN_WIDTH // 2 - panel_w // 2
-        panel_y = 100
-        pygame.draw.rect(surface, (30, 30, 40), (panel_x, panel_y, panel_w, panel_h))
-        pygame.draw.rect(surface, GOLD, (panel_x, panel_y, panel_w, panel_h), 2)
-
-        font = pygame.font.SysFont(None, 24)
-        small = pygame.font.SysFont(None, 18)
-
-        title = font.render(f"Recruit at {s.name}", True, GOLD)
-        surface.blit(title, (panel_x + 10, panel_y + 10))
-
-        gold = font.render(f"Gold: {self.player_army.gold}", True, GOLD)
-        surface.blit(gold, (panel_x + 10, panel_y + 35))
-
-        # Close button
-        pygame.draw.rect(surface, (150, 50, 50), (panel_x + panel_w - 35, panel_y + 5, 30, 25))
-        close = small.render("X", True, WHITE)
-        surface.blit(close, (panel_x + panel_w - 25, panel_y + 8))
-
-        y = panel_y + 60
-        header = small.render("Available Recruits (click to hire):", True, WHITE)
-        surface.blit(header, (panel_x + 10, y))
-        y += 22
-
-        for i, unit in enumerate(s.available_recruits):
-            can_afford = self.player_army.gold >= unit.cost
-            color = WHITE if can_afford else (120, 120, 120)
-            btn_color = (50, 80, 50) if can_afford else (50, 50, 50)
-            pygame.draw.rect(surface, btn_color, (panel_x + 10, y, 380, 28))
-            pygame.draw.rect(surface, GREY, (panel_x + 10, y, 380, 28), 1)
-            text = small.render(
-                f"[{i+1}] {unit.name} ({unit.squad_size} soldiers) - {unit.cost}g | "
-                f"ATK:{unit.melee_attack} DEF:{unit.melee_defense}"
-                f"{' RNG:'+str(unit.ranged_attack) if unit.ranged_attack else ''}",
-                True, color)
-            surface.blit(text, (panel_x + 15, y + 5))
-            y += 35
-
-        y += 15
-        header2 = small.render("Your Army:", True, WHITE)
-        surface.blit(header2, (panel_x + 10, y))
-        y += 22
-
-        for i, csq in enumerate(self.player_army.squads):
-            stats = csq.unit_stats
-            count_str = f"{csq.current_count}/{csq.max_count}" if csq.is_understrength else str(csq.current_count)
-            text = small.render(f"  {stats.name} ({count_str}) - Upkeep: {stats.upkeep}",
-                                True, WHITE)
-            surface.blit(text, (panel_x + 10, y))
-            pygame.draw.rect(surface, (120, 40, 40), (panel_x + 340, y, 50, 18))
-            disband = small.render("Drop", True, WHITE)
-            surface.blit(disband, (panel_x + 345, y + 1))
-            y += 25
-
-        footer = small.render("[ESC] Close  |  Click unit to recruit  |  Click 'Drop' to disband",
-                              True, (150, 150, 150))
-        surface.blit(footer, (panel_x + 10, panel_y + panel_h - 25))
 
     def _draw_diplomacy(self, surface):
         """Draw diplomacy overview panel."""

@@ -182,11 +182,6 @@ class Army:
 
     def apply_battle_results(self, battle_scene):
         """Read battle results and update campaign squads."""
-        # Map battle squads back to campaign squads by index
-        battle_squads = [sq for sq in battle_scene.player_squads
-                         if battle_scene.player_squads[0].team == self.squads[0].unit_stats.squad_size
-                         ] if False else []  # placeholder - use team matching
-
         # Match by order: campaign squad i -> battle squad i
         team = 0 if self.is_player else 1
         battle_team_squads = [sq for sq in (

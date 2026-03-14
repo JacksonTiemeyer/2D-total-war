@@ -16,10 +16,14 @@ from core.settings import (
     SCREEN_WIDTH, SCREEN_HEIGHT,
     WHITE, BLACK, GREY, DARK_GREY, GOLD,
     TEAM_COLORS,
+    ARMY_SIZE_BASE, ARMY_SIZE_PER_LEVEL, ARMY_SIZE_MAX,
+    REST_COST_PER_DAY, REST_REPLENISH_RATE,
+    MERCENARY_COST_MULTIPLIER, TAVERN_MERCS_COUNT, TAVERN_RUMORS_COUNT,
 )
 from core.utils import point_in_rect
 from data.unit_types import ALL_RECRUITABLE, FACTION_SPECIALTY_UNITS
 from campaign.army import CampaignSquad
+from campaign.settlement import SettlementType
 
 
 # --- Colors used only within this UI ---
@@ -38,20 +42,9 @@ _TEXT_WARN = (220, 160, 60)
 _HEALTH_GREEN = (60, 180, 60)
 _HEALTH_RED = (180, 60, 60)
 
-# Army size limit (B11) - base limit, increases with general level
-_BASE_ARMY_LIMIT = 60
-
-# Rest costs
-_REST_GOLD_PER_DAY = 10
-_REST_1DAY_HEAL = 0.20   # fraction of missing soldiers restored
-_REST_3DAY_HEAL = 0.50
-
-# Mercenary cost multiplier
-_MERCENARY_COST_MULT = 1.5
-
-# Tavern pool size
-_MERCENARY_POOL_SIZE = 3
-_RUMOR_COUNT = 3
+# Rest heal fractions (multi-day rest heals more)
+_REST_1DAY_HEAL = REST_REPLENISH_RATE
+_REST_3DAY_HEAL = min(1.0, REST_REPLENISH_RATE * 3 * 0.85)  # diminishing returns
 
 # Rumor templates
 _RUMOR_TEMPLATES = [
@@ -72,7 +65,8 @@ _RUMOR_TEMPLATES = [
 
 def _army_size_limit(general_level):
     """Compute army soldier cap based on general level (B11)."""
-    return _BASE_ARMY_LIMIT + (general_level - 1) * 10
+    return min(ARMY_SIZE_MAX,
+               ARMY_SIZE_BASE + (general_level - 1) * ARMY_SIZE_PER_LEVEL)
 
 
 class SettlementInteraction:
@@ -142,7 +136,7 @@ class SettlementInteraction:
         tabs = []
         st = self.settlement.settlement_type
         # Tavern available in towns and castles
-        if st in ("town", "castle"):
+        if st in (SettlementType.TOWN, SettlementType.CASTLE):
             tabs.append("tavern")
         tabs.append("recruit")
         tabs.append("rest")
@@ -155,7 +149,7 @@ class SettlementInteraction:
         """Create a random pool of mercenary units for hire."""
         pool = ALL_RECRUITABLE[:]
         random.shuffle(pool)
-        self.mercenary_pool = pool[:_MERCENARY_POOL_SIZE]
+        self.mercenary_pool = pool[:TAVERN_MERCS_COUNT]
 
     def _generate_rumors(self):
         """Create flavor-text rumors about the world."""
@@ -163,7 +157,7 @@ class SettlementInteraction:
         settlement_names = [s.name for s in self.all_settlements] if self.all_settlements else [self.settlement.name]
         self.rumors = []
         templates = random.sample(_RUMOR_TEMPLATES,
-                                  min(_RUMOR_COUNT, len(_RUMOR_TEMPLATES)))
+                                  min(TAVERN_RUMORS_COUNT, len(_RUMOR_TEMPLATES)))
         for tmpl in templates:
             text = tmpl
             if "{faction}" in text:
@@ -191,10 +185,6 @@ class SettlementInteraction:
 
         Returns None or a dict describing a campaign-level action.
         """
-        # Tick message timer on any event (cheap enough)
-        if self._message_timer > 0:
-            self._message_timer -= 1
-
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_ESCAPE:
                 return {"action": "leave"}
@@ -290,7 +280,7 @@ class SettlementInteraction:
         if index >= len(self.mercenary_pool):
             return None
         unit = self.mercenary_pool[index]
-        cost = int(unit.cost * _MERCENARY_COST_MULT)
+        cost = int(unit.cost * MERCENARY_COST_MULTIPLIER)
         limit = _army_size_limit(self.army.general_level)
         if self.army.total_soldiers + unit.squad_size > limit:
             self._flash(f"Army limit reached ({limit} soldiers).")
@@ -323,7 +313,7 @@ class SettlementInteraction:
         return None
 
     def _rest(self, days, heal_fraction):
-        cost = _REST_GOLD_PER_DAY * days
+        cost = REST_COST_PER_DAY * days
         if self.army.gold < cost:
             self._flash("Not enough gold.")
             return None
@@ -492,7 +482,7 @@ class SettlementInteraction:
             y += 20
         else:
             for i, unit in enumerate(self.mercenary_pool):
-                cost = int(unit.cost * _MERCENARY_COST_MULT)
+                cost = int(unit.cost * MERCENARY_COST_MULTIPLIER)
                 can_afford = self.army.gold >= cost
                 limit = _army_size_limit(self.army.general_level)
                 can_fit = self.army.total_soldiers + unit.squad_size <= limit
@@ -697,7 +687,7 @@ class SettlementInteraction:
             y += 25
 
         # Rest 1 day button
-        cost_1 = _REST_GOLD_PER_DAY
+        cost_1 = REST_COST_PER_DAY
         can_afford_1 = self.army.gold >= cost_1
         btn_rect_1 = (cx + 15, y, 300, 36)
         hovered_1 = point_in_rect(mx, my, *btn_rect_1)
@@ -711,7 +701,7 @@ class SettlementInteraction:
         y += 44
 
         # Rest 3 days button
-        cost_3 = _REST_GOLD_PER_DAY * 3
+        cost_3 = REST_COST_PER_DAY * 3
         can_afford_3 = self.army.gold >= cost_3
         btn_rect_3 = (cx + 15, y, 300, 36)
         hovered_3 = point_in_rect(mx, my, *btn_rect_3)
@@ -726,7 +716,7 @@ class SettlementInteraction:
 
         # Info
         info = self._font_small.render(
-            f"Resting costs {_REST_GOLD_PER_DAY}g per day. Current gold: {self.army.gold}",
+            f"Resting costs {REST_COST_PER_DAY}g per day. Current gold: {self.army.gold}",
             True, _TEXT_DIM)
         surface.blit(info, (cx + 15, y))
 

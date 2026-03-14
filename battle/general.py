@@ -210,6 +210,10 @@ class General:
                 opp.take_damage(self.melee_attack * 3)
             elif opp.duel_score > self.duel_score:
                 self.take_damage(opp.melee_attack * 3)
+            else:
+                # Tie: both take reduced damage
+                self.take_damage(opp.melee_attack)
+                opp.take_damage(self.melee_attack)
             self._end_duel()
 
     def _duel_clash(self, opponent):
@@ -264,7 +268,7 @@ class General:
             opponent.duel_state = DuelState.WON
             opponent.duels_won += 1
             opponent.kills += 1
-            opponent.gain_xp(3)
+            # A6: XP awarded post-battle only, not during battle
             self.duel_state = DuelState.LOST
 
     def _end_duel(self):
