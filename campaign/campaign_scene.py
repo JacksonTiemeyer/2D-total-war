@@ -34,6 +34,9 @@ from campaign.army import (
     Army, create_default_player_army, create_enemy_army,
 )
 from campaign.settlement_ui import SettlementInteraction
+from campaign.ai_controller import ArmyAI, pick_personality, AITask
+from campaign.roaming import RoamingManager, ROAMING_TYPES
+from campaign.quest import QuestManager
 from data.unit_types import ALL_RECRUITABLE, GENERAL_ROSTER
 from campaign.faction import FACTION_ROSTER, FACTION_BY_TEAM
 from campaign.diplomacy import DiplomacyManager, DiplomacyState
@@ -58,6 +61,8 @@ class CampaignScene:
         self.settlements = []
         self.selected_settlement = None
         self.show_diplomacy = False
+        self.show_quest_log = False
+        self.show_army_panel = False
         self.pending_battle = None  # (player_army, enemy_army) tuple
 
         # B9/C3: Settlement interaction
@@ -90,7 +95,17 @@ class CampaignScene:
         self._ai_diplomacy_timer = 0
         self._income_timer = 0
 
+        # B5: AI controllers - maps army id -> ArmyAI
+        self.ai_controllers = {}
+
+        # B8: Roaming armies and events manager
+        self.roaming_manager = RoamingManager()
+
+        # B3: Quest system
+        self.quest_manager = QuestManager()
+
         self._generate_world()
+        self._init_ai_controllers()
         self._add_notification("You begin as an independent lord. Visit settlements to recruit and trade!")
 
     def _add_notification(self, text):
@@ -224,6 +239,9 @@ class CampaignScene:
         if self.show_diplomacy:
             return self._handle_diplomacy_event(event)
 
+        if getattr(self, 'show_army_panel', False):
+            return self._handle_army_panel_event(event)
+
         self.camera.handle_event(event)
 
         if event.type == pygame.KEYDOWN:
@@ -251,6 +269,10 @@ class CampaignScene:
                 self._cycle_general()
             elif event.key == pygame.K_d:
                 self.show_diplomacy = True
+            elif event.key == pygame.K_q:
+                self.show_quest_log = not getattr(self, 'show_quest_log', False)
+            elif event.key == pygame.K_a:
+                self.show_army_panel = not getattr(self, 'show_army_panel', False)
             elif event.key == pygame.K_s and (pygame.key.get_mods() & pygame.KMOD_CTRL):
                 self._save_game()
 
@@ -328,7 +350,8 @@ class CampaignScene:
                     return
                 self.settlement_interaction = SettlementInteraction(
                     s, self.player_army, self.diplomacy, self.factions,
-                    self.day, self.settlements, self.armies)
+                    self.day, self.settlements, self.armies,
+                    quest_manager=self.quest_manager)
                 self.paused = True
                 self._add_notification(f"Entered {s.name}")
                 return
@@ -358,7 +381,8 @@ class CampaignScene:
                     return
                 self.settlement_interaction = SettlementInteraction(
                     s, self.player_army, self.diplomacy, self.factions,
-                    self.day, self.settlements, self.armies)
+                    self.day, self.settlements, self.armies,
+                    quest_manager=self.quest_manager)
                 self.settlement_interaction.current_tab = "recruit"
                 self.paused = True
                 return
@@ -419,6 +443,19 @@ class CampaignScene:
         self._add_notification(f"Joined {faction.name}! You are now a vassal.")
         self._territory_needs_update = True
 
+    def _found_player_faction(self, settlement):
+        """B7: Player founds their own faction by capturing a neutral settlement."""
+        self.player_faction = 0  # player's own faction (team 0)
+        settlement.owner = 0
+        self._add_notification(
+            f"You have founded your own faction! {settlement.name} is your capital.")
+        self._territory_needs_update = True
+        # Set relations: all factions are wary of the new power
+        for f in self.factions:
+            current = self.diplomacy.get_relation(0, f.team)
+            if current > -20:
+                self.diplomacy.modify_relation(0, f.team, -10)
+
     def _leave_faction(self):
         """B2: Player leaves their current faction."""
         if self.player_faction is None:
@@ -463,43 +500,44 @@ class CampaignScene:
         # Capture settlements
         self._process_settlement_capture()
 
+        # B8: Roaming armies + events
+        self.roaming_manager.update(
+            self.day, self.armies, self.settlements, self.diplomacy, self)
+
+        # B3: Quest updates
+        self.quest_manager.generate_bounty_board(
+            self.settlements, self.factions, self.day)
+        completed, failed = self.quest_manager.update(
+            self.player_army, self.day, self.diplomacy)
+        for q in completed:
+            self._add_notification(f"Quest Complete: {q.title} (+{q.gold_reward}g)")
+        for q in failed:
+            self._add_notification(f"Quest Failed: {q.title}")
+
         # Mark fog as needing update
         self._fog_needs_update = True
         self._territory_needs_update = True
 
+    def _init_ai_controllers(self):
+        """B5: Attach AI controllers to all non-player armies."""
+        for army in self.armies:
+            if not army.is_player:
+                self.ai_controllers[id(army)] = ArmyAI(army, pick_personality())
+
+    def _get_ai(self, army):
+        """Get or create AI controller for an army."""
+        key = id(army)
+        if key not in self.ai_controllers:
+            self.ai_controllers[key] = ArmyAI(army, pick_personality())
+        return self.ai_controllers[key]
+
     def _process_ai_movement(self):
-        """Move AI armies each tick (real-time B1)."""
+        """B5: AI armies use priority-based task system."""
         for army in self.armies:
             if army.is_player:
                 continue
-
-            # Give new orders periodically if not moving
-            if not army.moving:
-                enemies = [a for a in self.armies
-                           if a.team != army.team and
-                           self.diplomacy.are_at_war(army.team, a.team)]
-                # Find nearby friendly settlements to patrol
-                own_settlements = [s for s in self.settlements if s.owner == army.team]
-
-                if enemies and random.random() < 0.3:
-                    nearest = min(enemies, key=lambda e: distance(army.x, army.y, e.x, e.y))
-                    army.give_move_order(
-                        nearest.x + random.randint(-80, 80),
-                        nearest.y + random.randint(-80, 80),
-                    )
-                elif own_settlements and random.random() < 0.5:
-                    target = random.choice(own_settlements)
-                    army.give_move_order(
-                        target.x + random.randint(-100, 100),
-                        target.y + random.randint(-100, 100),
-                    )
-                else:
-                    army.give_move_order(
-                        army.x + random.randint(-150, 150),
-                        army.y + random.randint(-150, 150),
-                    )
-
-            army.update()
+            ai = self._get_ai(army)
+            ai.update(self.armies, self.settlements, self.diplomacy)
 
     def _process_settlement_capture(self):
         """Check if armies capture enemy settlements."""
@@ -511,18 +549,40 @@ class CampaignScene:
                     if army.is_player and self.player_faction is not None:
                         capture_team = self.player_faction
                     if s.owner != capture_team:
-                        if s.owner is None or self.diplomacy.are_at_war(army.team, s.owner):
-                            if army.army_strength > s.garrison_strength:
-                                s.owner = capture_team
-                                faction_names = {f.team: f.name for f in self.factions}
-                                faction_names[0] = "You"
-                                captor = faction_names.get(capture_team, "Unknown")
-                                self._add_notification(f"{captor} captured {s.name}!")
-                                self._territory_needs_update = True
+                        can_capture = (s.owner is None or
+                                       self._are_hostile(army.team, s.owner))
+                        if can_capture and army.army_strength > s.garrison_strength:
+                            old_owner = s.owner
+                            s.owner = capture_team
+                            faction_names = {f.team: f.name for f in self.factions}
+                            faction_names[0] = "You"
+                            captor = faction_names.get(capture_team, "Unknown")
+                            self._add_notification(f"{captor} captured {s.name}!")
+                            self._territory_needs_update = True
+                            # B7: Player capturing neutral settlement can found faction
+                            if army.is_player and old_owner is None and self.player_faction is None:
+                                self._found_player_faction(s)
+
+    def _are_hostile(self, team_a, team_b):
+        """Check if two teams are hostile (war or roaming vs faction)."""
+        if team_a == team_b:
+            return False
+        # Roaming armies (bandits etc) are hostile to all factions
+        roaming_teams = set(ROAMING_TYPES.keys())
+        if team_a in roaming_teams and team_b not in roaming_teams:
+            return True
+        if team_b in roaming_teams and team_a not in roaming_teams:
+            return True
+        # Two different roaming types fight each other (except mercs)
+        from campaign.faction import TEAM_MERCENARY
+        if team_a in roaming_teams and team_b in roaming_teams:
+            return team_a != TEAM_MERCENARY and team_b != TEAM_MERCENARY
+        return self.diplomacy.are_at_war(team_a, team_b)
 
     def _resolve_ai_battles(self):
         """Auto-resolve battles between AI armies that collide."""
         to_remove = []
+        winners = []
         checked = set()
         for a1 in self.armies:
             if a1.is_player or a1 in to_remove:
@@ -535,24 +595,28 @@ class CampaignScene:
                     continue
                 checked.add(pair)
                 if (a1.team != a2.team and
-                        self.diplomacy.are_at_war(a1.team, a2.team) and
+                        self._are_hostile(a1.team, a2.team) and
                         distance(a1.x, a1.y, a2.x, a2.y) < 30):
                     if a1.army_strength >= a2.army_strength:
                         for sq in a1.squads:
                             loss = int(sq.current_count * random.uniform(0.1, 0.3))
                             sq.current_count = max(1, sq.current_count - loss)
                         to_remove.append(a2)
+                        winners.append(a1)
                     else:
                         for sq in a2.squads:
                             loss = int(sq.current_count * random.uniform(0.1, 0.3))
                             sq.current_count = max(1, sq.current_count - loss)
                         to_remove.append(a1)
+                        winners.append(a2)
         for army in to_remove:
             if army in self.armies:
-                faction_names = {f.team: f.name for f in self.factions}
-                winner_team = [a for a in self.armies if a not in to_remove and
-                               distance(a.x, a.y, army.x, army.y) < 40]
                 self.armies.remove(army)
+                # Clean up AI controller
+                self.ai_controllers.pop(id(army), None)
+        # B8: Record wins for roaming armies (stronghold escalation)
+        for w in winners:
+            self.roaming_manager.record_roaming_win(w)
 
     def _save_game(self):
         from core.save_system import save_campaign
@@ -598,7 +662,7 @@ class CampaignScene:
         for army in self.armies:
             if army.is_player or army.team == 0:
                 continue
-            if not self.diplomacy.are_at_war(0, army.team):
+            if not self._are_hostile(0, army.team):
                 continue
             # B13: Only trigger if army is visible (not in fog)
             if not self._is_visible(army.x, army.y):
@@ -628,7 +692,10 @@ class CampaignScene:
 
     def remove_army(self, army):
         if army in self.armies:
+            # B3: Record kill for quest tracking
+            self.quest_manager.record_kill(army.team)
             self.armies.remove(army)
+            self.ai_controllers.pop(id(army), None)
 
     def draw(self, surface):
         # Background - parchment style
@@ -658,6 +725,11 @@ class CampaignScene:
         for s in self.settlements:
             s.draw(surface, self.camera)
 
+        # B8: Draw strongholds
+        for sh in self.roaming_manager.strongholds:
+            if self._is_visible(sh.x, sh.y):
+                self._draw_stronghold(surface, sh)
+
         # Armies (B13: only draw visible ones)
         for army in self.armies:
             if army.is_player:
@@ -679,6 +751,14 @@ class CampaignScene:
         # Diplomacy overlay
         if self.show_diplomacy:
             self._draw_diplomacy(surface)
+
+        # B3: Quest log overlay
+        if getattr(self, 'show_quest_log', False):
+            self._draw_quest_log(surface)
+
+        # C4: Army management panel
+        if getattr(self, 'show_army_panel', False):
+            self._draw_army_panel(surface)
 
     def _draw_territory_borders(self, surface):
         """B4: Draw faction territory as colored regions around settlements."""
@@ -709,6 +789,29 @@ class CampaignScene:
             border_color = (*color, territory_alpha + 40)
             pygame.draw.circle(territory_surf, border_color, (radius, radius), radius, max(1, int(radius * 0.05)))
             surface.blit(territory_surf, (sx - radius, sy - radius))
+
+    def _draw_stronghold(self, surface, stronghold):
+        """B8: Draw a roaming army stronghold on the map."""
+        from campaign.roaming import StrongholdStage
+        sx, sy = self.camera.world_to_screen(stronghold.x, stronghold.y)
+        color = TEAM_COLORS.get(stronghold.team, GREY)
+        r = self.camera.scale(15)
+        if r < 3:
+            return
+        if stronghold.stage == StrongholdStage.STRONGHOLD:
+            # Larger, fortified marker
+            r = self.camera.scale(20)
+            pygame.draw.rect(surface, color, (sx - r, sy - r, r * 2, r * 2))
+            pygame.draw.rect(surface, (200, 200, 200), (sx - r, sy - r, r * 2, r * 2), 2)
+        else:
+            # Camp marker - triangle
+            pts = [(sx, sy - r), (sx - r, sy + r), (sx + r, sy + r)]
+            pygame.draw.polygon(surface, color, pts)
+            pygame.draw.polygon(surface, (200, 200, 200), pts, 1)
+        if self.camera.zoom > 0.4:
+            font = pygame.font.SysFont(None, max(12, self.camera.scale(13)))
+            text = font.render(stronghold.name, True, (220, 180, 180))
+            surface.blit(text, (sx - text.get_width() // 2, sy + r + 2))
 
     def _draw_terrain(self, surface):
         """Draw decorative terrain features."""
@@ -862,8 +965,8 @@ class CampaignScene:
 
         # Controls
         ctrl_text = small_font.render(
-            "[RMB] Move  [E] Enter Settlement  [R] Recruit  [G] General  [D] Diplomacy  "
-            "[SPACE] Pause  [1/2/3] Speed",
+            "[RMB] Move [E] Settlement [R] Recruit [D] Diplomacy "
+            "[Q] Quests [A] Army [SPACE] Pause [1/2/3] Speed",
             True, (180, 180, 180))
         surface.blit(ctrl_text, (10, SCREEN_HEIGHT - 30))
 
@@ -948,9 +1051,9 @@ class CampaignScene:
         overlay.fill((0, 0, 0, 140))
         surface.blit(overlay, (0, 0))
 
-        panel_w, panel_h = 500, 450
+        panel_w, panel_h = 520, 580
         panel_x = SCREEN_WIDTH // 2 - panel_w // 2
-        panel_y = 80
+        panel_y = 40
         pygame.draw.rect(surface, (30, 30, 40), (panel_x, panel_y, panel_w, panel_h))
         pygame.draw.rect(surface, GOLD, (panel_x, panel_y, panel_w, panel_h), 2)
 
@@ -958,7 +1061,7 @@ class CampaignScene:
         small = pygame.font.SysFont(None, 20)
         tiny = pygame.font.SysFont(None, 16)
 
-        title = font.render("Diplomacy", True, GOLD)
+        title = font.render("Diplomacy & Relations", True, GOLD)
         surface.blit(title, (panel_x + panel_w // 2 - title.get_width() // 2, panel_y + 10))
 
         y = panel_y + 50
@@ -1008,23 +1111,219 @@ class CampaignScene:
             y += 18
 
             owned = sum(1 for s in self.settlements if s.owner == faction.team)
-            armies_count = sum(1 for a in self.armies if a.team == faction.team)
+            faction_armies = [a for a in self.armies if a.team == faction.team]
             info = tiny.render(
-                f"  Settlements: {owned}  |  Armies: {armies_count}",
+                f"  Settlements: {owned}  |  Armies: {len(faction_armies)}",
                 True, (140, 140, 140))
             surface.blit(info, (panel_x + 30, y))
-            y += 26
+            y += 16
 
-        # B2: Show current faction status
+            # B12: Show individual general opinions
+            for army in faction_armies[:2]:  # show up to 2 generals
+                gen_opinion = self.diplomacy.get_general_opinion(army.general_name)
+                gen_state = self.diplomacy.get_general_state(army.general_name)
+                ai = self.ai_controllers.get(id(army))
+                personality_str = f" ({ai.personality})" if ai else ""
+                op_color = (100, 200, 100) if gen_opinion > 0 else (200, 100, 100) if gen_opinion < 0 else (150, 150, 150)
+                gt = tiny.render(
+                    f"    {army.general_name}{personality_str}: {gen_opinion:+d}",
+                    True, op_color)
+                surface.blit(gt, (panel_x + 30, y))
+                y += 14
+            y += 10
+
+        # B2/B7: Show current faction status
         if self.player_faction is not None:
-            f_obj = FACTION_BY_TEAM.get(self.player_faction)
-            f_name = f_obj.name if f_obj else "Unknown"
-            status = small.render(f"Current Faction: {f_name}  [L] Leave Faction", True, (100, 200, 255))
+            if self.player_faction == 0:
+                player_settlements = sum(1 for s in self.settlements if s.owner == 0)
+                status = small.render(
+                    f"Your Faction  |  Settlements: {player_settlements}  [L] Dissolve",
+                    True, (100, 255, 200))
+            else:
+                f_obj = FACTION_BY_TEAM.get(self.player_faction)
+                f_name = f_obj.name if f_obj else "Unknown"
+                status = small.render(f"Vassal of {f_name}  [L] Leave Faction", True, (100, 200, 255))
             surface.blit(status, (panel_x + 15, y + 5))
         else:
-            status = small.render("You are Independent. Reach +50 rep to join a faction.", True, (220, 160, 60))
+            own_settlements = sum(1 for s in self.settlements if s.owner == 0)
+            if own_settlements > 0:
+                status = small.render("You own settlements! Capture a neutral one to found a faction.", True, (100, 255, 100))
+            else:
+                status = small.render("You are Independent. Reach +50 rep to join a faction, or capture a settlement.", True, (220, 160, 60))
             surface.blit(status, (panel_x + 15, y + 5))
 
         footer = tiny.render("[ESC] Close  |  Press number to interact", True, (150, 150, 150))
+        surface.blit(footer, (panel_x + panel_w // 2 - footer.get_width() // 2,
+                              panel_y + panel_h - 25))
+
+    def _draw_quest_log(self, surface):
+        """B3: Draw quest log overlay."""
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 140))
+        surface.blit(overlay, (0, 0))
+
+        panel_w, panel_h = 500, 400
+        panel_x = SCREEN_WIDTH // 2 - panel_w // 2
+        panel_y = 80
+        pygame.draw.rect(surface, (30, 30, 40), (panel_x, panel_y, panel_w, panel_h))
+        pygame.draw.rect(surface, GOLD, (panel_x, panel_y, panel_w, panel_h), 2)
+
+        font = pygame.font.SysFont(None, 28)
+        small = pygame.font.SysFont(None, 20)
+        tiny = pygame.font.SysFont(None, 16)
+
+        title = font.render("Quest Log", True, GOLD)
+        surface.blit(title, (panel_x + panel_w // 2 - title.get_width() // 2, panel_y + 10))
+
+        y = panel_y + 45
+        active = self.quest_manager.active_quests
+        if not active:
+            t = small.render("No active quests. Visit a settlement bounty board!", True, (150, 150, 150))
+            surface.blit(t, (panel_x + 20, y))
+        else:
+            for q in active:
+                # Quest title
+                qt = small.render(q.title, True, WHITE)
+                surface.blit(qt, (panel_x + 20, y))
+                y += 20
+
+                # Description
+                desc = tiny.render(q.description, True, (160, 160, 160))
+                surface.blit(desc, (panel_x + 30, y))
+                y += 16
+
+                # Progress
+                progress_parts = []
+                if q.is_kill_quest:
+                    progress_parts.append(f"Kills: {q.kills_done}/{q.kill_count}")
+                if q.time_limit > 0:
+                    progress_parts.append(f"Days left: {q.days_remaining}")
+                progress_parts.append(f"Reward: {q.gold_reward}g")
+                prog = tiny.render("  ".join(progress_parts), True, (180, 180, 100))
+                surface.blit(prog, (panel_x + 30, y))
+                y += 22
+
+        # Bounty board preview
+        y = max(y + 10, panel_y + panel_h - 120)
+        pygame.draw.line(surface, (80, 80, 100), (panel_x + 10, y), (panel_x + panel_w - 10, y))
+        y += 5
+        bb = small.render(f"Bounty Board ({len(self.quest_manager.bounty_board)} available)", True, (200, 180, 100))
+        surface.blit(bb, (panel_x + 20, y))
+        y += 22
+        for q in self.quest_manager.bounty_board[:3]:
+            qt = tiny.render(f"  {q.title} - {q.gold_reward}g", True, (140, 140, 140))
+            surface.blit(qt, (panel_x + 20, y))
+            y += 16
+
+        footer = tiny.render("[Q] Close  |  Accept quests at settlement bounty boards", True, (150, 150, 150))
+        surface.blit(footer, (panel_x + panel_w // 2 - footer.get_width() // 2,
+                              panel_y + panel_h - 25))
+
+    def _handle_army_panel_event(self, event):
+        """C4: Handle army management panel input."""
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_ESCAPE or event.key == pygame.K_a:
+                self.show_army_panel = False
+                return None
+            # Number keys to disband squads
+            if pygame.K_1 <= event.key <= pygame.K_9:
+                idx = event.key - pygame.K_1
+                if idx < len(self.player_army.squads):
+                    if len(self.player_army.squads) > 1:
+                        sq = self.player_army.squads[idx]
+                        self.player_army.remove_squad(idx)
+                        self._add_notification(f"Disbanded {sq.unit_stats.name}.")
+                    else:
+                        self._add_notification("Cannot disband your last squad!")
+            # Move squads up/down with arrow keys (reorder)
+            if event.key == pygame.K_UP:
+                self._army_panel_selected = max(0,
+                    getattr(self, '_army_panel_selected', 0) - 1)
+            elif event.key == pygame.K_DOWN:
+                self._army_panel_selected = min(
+                    len(self.player_army.squads) - 1,
+                    getattr(self, '_army_panel_selected', 0) + 1)
+        return None
+
+    def _draw_army_panel(self, surface):
+        """C4: Draw army management panel."""
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 140))
+        surface.blit(overlay, (0, 0))
+
+        panel_w, panel_h = 500, 500
+        panel_x = SCREEN_WIDTH // 2 - panel_w // 2
+        panel_y = 60
+        pygame.draw.rect(surface, (30, 30, 40), (panel_x, panel_y, panel_w, panel_h))
+        pygame.draw.rect(surface, GOLD, (panel_x, panel_y, panel_w, panel_h), 2)
+
+        font = pygame.font.SysFont(None, 28)
+        small = pygame.font.SysFont(None, 20)
+        tiny = pygame.font.SysFont(None, 16)
+
+        title = font.render("Army Management", True, GOLD)
+        surface.blit(title, (panel_x + panel_w // 2 - title.get_width() // 2, panel_y + 10))
+
+        # General info
+        y = panel_y + 45
+        pa = self.player_army
+        gen_info = small.render(
+            f"General: {pa.general_name} ({pa.general_stats.name}) Lv{pa.general_level}",
+            True, WHITE)
+        surface.blit(gen_info, (panel_x + 15, y))
+        y += 22
+
+        army_info = small.render(
+            f"Army: {pa.total_soldiers}/{pa.army_size_limit} soldiers  |  "
+            f"Strength: {pa.army_strength}  |  Upkeep: {pa.upkeep}/day",
+            True, (180, 180, 180))
+        surface.blit(army_info, (panel_x + 15, y))
+        y += 22
+
+        gold_info = small.render(f"Gold: {pa.gold}", True, GOLD)
+        surface.blit(gold_info, (panel_x + 15, y))
+        y += 28
+
+        # Squad list
+        pygame.draw.line(surface, (80, 80, 100), (panel_x + 10, y), (panel_x + panel_w - 10, y))
+        y += 8
+
+        header = tiny.render(
+            f"{'#':<3} {'Unit':<22} {'Count':>8} {'Rank':<12} {'Kills':>6} {'Str':>6}",
+            True, (140, 140, 140))
+        surface.blit(header, (panel_x + 15, y))
+        y += 18
+
+        selected = getattr(self, '_army_panel_selected', 0)
+        for i, sq in enumerate(pa.squads):
+            is_selected = (i == selected)
+            bg_color = (50, 50, 70) if is_selected else (35, 35, 50)
+            row_rect = (panel_x + 10, y, panel_w - 20, 22)
+            pygame.draw.rect(surface, bg_color, row_rect)
+            if is_selected:
+                pygame.draw.rect(surface, GOLD, row_rect, 1)
+
+            count_str = f"{sq.current_count}/{sq.max_count}" if sq.is_understrength else str(sq.current_count)
+            rank_str = sq.rank_name if sq.battles_survived > 0 else "-"
+
+            line = tiny.render(
+                f"[{i+1}] {sq.unit_stats.name:<22} {count_str:>8} {rank_str:<12} {sq.total_kills:>6} {sq.strength:>6}",
+                True, WHITE)
+            surface.blit(line, (panel_x + 15, y + 3))
+            y += 24
+
+        # Stats summary
+        y += 10
+        pygame.draw.line(surface, (80, 80, 100), (panel_x + 10, y), (panel_x + panel_w - 10, y))
+        y += 8
+        total_kills = sum(sq.total_kills for sq in pa.squads)
+        summary = small.render(
+            f"Total Squads: {len(pa.squads)}  |  Total Kills: {total_kills}",
+            True, WHITE)
+        surface.blit(summary, (panel_x + 15, y))
+
+        footer = tiny.render(
+            "[A/ESC] Close  |  [1-9] Disband squad  |  Arrows to select",
+            True, (150, 150, 150))
         surface.blit(footer, (panel_x + panel_w // 2 - footer.get_width() // 2,
                               panel_y + panel_h - 25))

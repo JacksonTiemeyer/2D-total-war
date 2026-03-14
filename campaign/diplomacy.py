@@ -1,4 +1,9 @@
-"""Diplomacy manager - tracks faction relationships and diplomatic actions."""
+"""Diplomacy manager - tracks faction relationships and diplomatic actions.
+
+B12: Dual-layer reputation system:
+  - Faction reputation: how the faction views the player (-100 to 100)
+  - Individual general opinion: how each named general views the player (-100 to 100)
+"""
 
 import random
 from campaign.faction import FactionPersonality
@@ -13,10 +18,12 @@ class DiplomacyState:
 
 
 class DiplomacyManager:
-    """Manages relationships between all factions.
+    """Manages relationships between all factions and individual generals.
 
     Relations are stored as a dict of (team_a, team_b) -> int (-100 to 100).
     Negative = hostile, Positive = friendly.
+
+    B12: Also tracks individual general opinions of the player.
     """
 
     WAR_THRESHOLD = -50
@@ -25,6 +32,8 @@ class DiplomacyManager:
     def __init__(self, factions):
         self.factions = {f.team: f for f in factions}
         self.relations = {}
+        # B12: Individual general opinions of the player (general_name -> int)
+        self.general_opinions = {}
         self._init_relations(factions)
 
     def _init_relations(self, factions):
@@ -148,13 +157,71 @@ class DiplomacyManager:
                 elif rel < -5:
                     self.modify_relation(faction.team, other.team, 1)
 
+    # --- B12: Individual general opinion methods ---
+
+    def get_general_opinion(self, general_name):
+        """Get a general's personal opinion of the player (-100 to 100)."""
+        return self.general_opinions.get(general_name, 0)
+
+    def set_general_opinion(self, general_name, value):
+        """Set a general's opinion, clamped to [-100, 100]."""
+        self.general_opinions[general_name] = max(-100, min(100, value))
+
+    def modify_general_opinion(self, general_name, delta):
+        """Adjust a general's opinion by delta."""
+        current = self.get_general_opinion(general_name)
+        self.set_general_opinion(general_name, current + delta)
+
+    def get_general_state(self, general_name):
+        """Return diplomatic-style state for a general's opinion."""
+        opinion = self.get_general_opinion(general_name)
+        if opinion <= -50:
+            return DiplomacyState.HOSTILE
+        elif opinion < -20:
+            return DiplomacyState.HOSTILE
+        elif opinion < 20:
+            return DiplomacyState.NEUTRAL
+        elif opinion < 50:
+            return DiplomacyState.FRIENDLY
+        else:
+            return DiplomacyState.ALLIED
+
+    def bribe_general(self, general_name, gold_amount):
+        """B12: Attempt to bribe a general. Returns opinion gained."""
+        gain = gold_amount // 10  # 10 gold = 1 opinion point
+        self.modify_general_opinion(general_name, gain)
+        return gain
+
+    def battle_opinion_update(self, general_name, player_won, shared_battle=False):
+        """B12: Update general opinion after battle interaction."""
+        if shared_battle:
+            # Fought alongside player
+            self.modify_general_opinion(general_name, 10)
+        elif player_won:
+            # Player defeated this general's army
+            self.modify_general_opinion(general_name, -15)
+        else:
+            # General beat the player
+            self.modify_general_opinion(general_name, 5)
+
     def serialize(self):
         """Convert to JSON-serializable dict."""
-        return {f"{a},{b}": v for (a, b), v in self.relations.items()}
+        return {
+            "relations": {f"{a},{b}": v for (a, b), v in self.relations.items()},
+            "general_opinions": self.general_opinions,
+        }
 
     def deserialize(self, data):
         """Restore from serialized data."""
         self.relations = {}
-        for key, val in data.items():
+        # Handle both old format (flat dict) and new format (nested)
+        if "relations" in data:
+            rel_data = data["relations"]
+            self.general_opinions = data.get("general_opinions", {})
+        else:
+            # Legacy format: data is the relations dict directly
+            rel_data = data
+            self.general_opinions = {}
+        for key, val in rel_data.items():
             a, b = key.split(",")
             self.relations[(int(a), int(b))] = val

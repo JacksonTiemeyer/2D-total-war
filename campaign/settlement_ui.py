@@ -82,12 +82,13 @@ class SettlementInteraction:
         {"action": "recruit", "unit_stats": UnitStats}
     """
 
-    TABS = ["tavern", "recruit", "rest", "garrison"]
+    TABS = ["tavern", "recruit", "rest", "garrison", "quests"]
     TAB_LABELS = {"tavern": "Tavern", "recruit": "Recruit",
-                  "rest": "Rest", "garrison": "Garrison"}
+                  "rest": "Rest", "garrison": "Garrison",
+                  "quests": "Quests"}
 
     def __init__(self, settlement, player_army, diplomacy, factions, day,
-                 all_settlements=None, all_armies=None):
+                 all_settlements=None, all_armies=None, quest_manager=None):
         self.settlement = settlement
         self.army = player_army
         self.diplomacy = diplomacy
@@ -95,6 +96,7 @@ class SettlementInteraction:
         self.day = day
         self.all_settlements = all_settlements or []
         self.all_armies = all_armies or []
+        self.quest_manager = quest_manager  # B3: quest manager reference
 
         # Determine available tabs
         self._available_tabs = self._compute_available_tabs()
@@ -140,6 +142,9 @@ class SettlementInteraction:
             tabs.append("tavern")
         tabs.append("recruit")
         tabs.append("rest")
+        # B3: Quests/bounty board available at towns and castles
+        if st in (SettlementType.TOWN, SettlementType.CASTLE):
+            tabs.append("quests")
         # Garrison only for player-owned settlements
         if self.settlement.owner == self.army.team:
             tabs.append("garrison")
@@ -217,6 +222,8 @@ class SettlementInteraction:
                 return self._handle_rest_click(mx, my)
             elif self.current_tab == "garrison":
                 return self._handle_garrison_click(mx, my)
+            elif self.current_tab == "quests":
+                return self._handle_quests_click(mx, my)
 
         return None
 
@@ -258,6 +265,21 @@ class SettlementInteraction:
             return self._rest(1, _REST_1DAY_HEAL)
         if "rest_3" in self._button_rects and point_in_rect(mx, my, *self._button_rects["rest_3"]):
             return self._rest(3, _REST_3DAY_HEAL)
+        return None
+
+    def _handle_quests_click(self, mx, my):
+        """B3: Handle quest bounty board clicks."""
+        if not self.quest_manager:
+            return None
+        for i in range(len(self.quest_manager.bounty_board)):
+            key = f"quest_accept_{i}"
+            if key in self._button_rects and point_in_rect(mx, my, *self._button_rects[key]):
+                q = self.quest_manager.bounty_board[i]
+                if self.quest_manager.accept_quest(q, self.day):
+                    self._flash(f"Quest accepted: {q.title}")
+                else:
+                    self._flash("Cannot accept more quests (max 5).")
+                return None
         return None
 
     def _handle_garrison_click(self, mx, my):
@@ -399,6 +421,8 @@ class SettlementInteraction:
             self._draw_rest(surface, *content_rect)
         elif self.current_tab == "garrison":
             self._draw_garrison(surface, *content_rect)
+        elif self.current_tab == "quests":
+            self._draw_quests(surface, *content_rect)
 
         # Leave button
         leave_w, leave_h = 160, 32
@@ -802,6 +826,80 @@ class SettlementInteraction:
             "Adding a squad transfers its soldiers permanently to the garrison.",
             True, _TEXT_DIM)
         surface.blit(info, (cx + 15, y))
+
+    def _draw_quests(self, surface, cx, cy, cw, ch):
+        """B3: Draw bounty board / quest tab."""
+        mx, my = pygame.mouse.get_pos()
+        y = cy + 5
+
+        header = self._font.render("Bounty Board", True, WHITE)
+        surface.blit(header, (cx + 5, y))
+        y += 25
+
+        if not self.quest_manager:
+            t = self._font_small.render("Quest system not available.", True, _TEXT_DIM)
+            surface.blit(t, (cx + 15, y))
+            return
+
+        # Available quests
+        board = self.quest_manager.bounty_board
+        if not board:
+            t = self._font_small.render("No bounties available. Check back later.", True, _TEXT_DIM)
+            surface.blit(t, (cx + 15, y))
+            y += 22
+        else:
+            for i, q in enumerate(board):
+                btn_h = 60
+                key = f"quest_accept_{i}"
+                rect = (cx + 10, y, cw - 20, btn_h)
+                hovered = point_in_rect(mx, my, *rect)
+
+                can_accept = len(self.quest_manager.active_quests) < self.quest_manager.MAX_ACTIVE_QUESTS
+                col = (_BTN_HOVER if hovered else _BTN) if can_accept else _BTN_DISABLED
+                pygame.draw.rect(surface, col, rect)
+                pygame.draw.rect(surface, GREY, rect, 1)
+                self._button_rects[key] = rect
+
+                title_t = self._font.render(q.title, True, WHITE if can_accept else _TEXT_DIM)
+                surface.blit(title_t, (cx + 18, y + 3))
+
+                desc_t = self._font_tiny.render(q.description[:80], True, _TEXT_DIM)
+                surface.blit(desc_t, (cx + 18, y + 22))
+
+                reward_parts = [f"Reward: {q.gold_reward}g"]
+                if q.rep_reward:
+                    reward_parts.append(f"+{q.rep_reward} rep")
+                if q.time_limit:
+                    reward_parts.append(f"Time: {q.time_limit} days")
+                reward_t = self._font_tiny.render("  |  ".join(reward_parts), True, (180, 180, 100))
+                surface.blit(reward_t, (cx + 18, y + 38))
+
+                y += btn_h + 4
+
+        # Active quests
+        y += 10
+        pygame.draw.line(surface, _SEPARATOR, (cx + 10, y), (cx + cw - 10, y))
+        y += 8
+        active_h = self._font.render(
+            f"Active Quests ({len(self.quest_manager.active_quests)}/{self.quest_manager.MAX_ACTIVE_QUESTS})",
+            True, WHITE)
+        surface.blit(active_h, (cx + 5, y))
+        y += 25
+
+        for q in self.quest_manager.active_quests:
+            qt = self._font_small.render(q.title, True, WHITE)
+            surface.blit(qt, (cx + 15, y))
+            y += 18
+            progress_parts = []
+            if q.is_kill_quest:
+                progress_parts.append(f"Progress: {q.kills_done}/{q.kill_count}")
+            if q.time_limit > 0:
+                progress_parts.append(f"Days left: {q.days_remaining}")
+            if progress_parts:
+                pt = self._font_tiny.render("  ".join(progress_parts), True, (160, 160, 100))
+                surface.blit(pt, (cx + 25, y))
+                y += 16
+            y += 4
 
     # ------------------------------------------------------------------
     # Helpers

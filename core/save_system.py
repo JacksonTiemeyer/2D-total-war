@@ -34,6 +34,16 @@ def save_exists():
 
 def save_campaign(campaign_scene):
     """Serialize the full campaign state to JSON."""
+    # B5: Serialize AI controller state alongside armies
+    enemy_armies_data = []
+    for a in campaign_scene.armies:
+        if not a.is_player:
+            ad = _serialize_army(a)
+            ai = campaign_scene.ai_controllers.get(id(a))
+            if ai:
+                ad["ai"] = ai.serialize()
+            enemy_armies_data.append(ad)
+
     data = {
         "version": SAVE_VERSION,
         # B1: Real-time campaign state
@@ -46,16 +56,17 @@ def save_campaign(campaign_scene):
         "player_faction": campaign_scene.player_faction,
         # Armies
         "player_army": _serialize_army(campaign_scene.player_army),
-        "enemy_armies": [
-            _serialize_army(a) for a in campaign_scene.armies
-            if not a.is_player
-        ],
+        "enemy_armies": enemy_armies_data,
         # Settlements
         "settlements": [
             _serialize_settlement(s) for s in campaign_scene.settlements
         ],
         # Diplomacy
         "diplomacy": campaign_scene.diplomacy.serialize(),
+        # B8: Roaming manager state
+        "roaming": campaign_scene.roaming_manager.serialize(),
+        # B3: Quest system
+        "quests": campaign_scene.quest_manager.serialize(),
         # Camera position
         "camera": {
             "x": campaign_scene.camera.x,
@@ -206,10 +217,30 @@ def restore_campaign_scene(data):
     scene.player_army = _restore_army(pa)
     scene.armies.append(scene.player_army)
 
-    # Enemy armies
+    # Enemy armies + B5: AI controllers
+    scene.ai_controllers = {}
     for ea in data.get("enemy_armies", []):
         army = _restore_army(ea)
         scene.armies.append(army)
+        # Restore AI controller
+        from campaign.ai_controller import ArmyAI, pick_personality
+        ai = ArmyAI(army, pick_personality())
+        if "ai" in ea:
+            ai.deserialize(ea["ai"])
+        scene.ai_controllers[id(army)] = ai
+
+    # B8: Roaming manager
+    from campaign.roaming import RoamingManager
+    scene.roaming_manager = RoamingManager()
+    if "roaming" in data:
+        scene.roaming_manager.deserialize(data["roaming"])
+
+    # B3: Quest system
+    from campaign.quest import QuestManager
+    scene.quest_manager = QuestManager()
+    scene.show_quest_log = False
+    if "quests" in data:
+        scene.quest_manager.deserialize(data["quests"])
 
     scene._add_notification = lambda text: scene.notifications.append((text, 300))
     scene._add_notification("Campaign loaded!")
