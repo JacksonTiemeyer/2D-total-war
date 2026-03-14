@@ -251,8 +251,40 @@ class Game:
         # Award post-battle XP to generals (A6: XP only on battle completion)
         self._award_post_battle_xp()
 
+        gm = self.campaign.general_manager
+
         if self.battle.result == BattleResult.PLAYER_WIN:
             if self.current_enemy:
+                enemy_name = self.current_enemy.general_name
+                enemy_team = self.current_enemy.team
+
+                # B6: Update loyalty on battle outcomes
+                gm.on_battle_loss(enemy_name)
+
+                # D6: Check if enemy general is captured or killed
+                # Decisive = enemy lost >75% of their army
+                enemy_survived = sum(sq["alive"] for sq in self.battle_stats.get("enemy_squads", []))
+                enemy_initial = sum(sq["initial"] for sq in self.battle_stats.get("enemy_squads", []))
+                decisive = enemy_initial > 0 and enemy_survived / enemy_initial < 0.25
+
+                captured = gm.check_general_capture(enemy_name, decisive)
+                if captured:
+                    ai = self.campaign.ai_controllers.get(id(self.current_enemy))
+                    personality = ai.personality if ai else "cautious"
+                    gm.capture_npc_general(
+                        enemy_name, enemy_team, personality,
+                        self.current_enemy.general_level)
+                    self.campaign._add_notification(
+                        f"Captured {enemy_name}! Press [J] to manage prisoners.")
+                else:
+                    # NPC permadeath
+                    gm.kill_npc_general(enemy_name)
+                    self.campaign._add_notification(
+                        f"{enemy_name} was slain in battle!")
+
+                # B12: Update general opinion on player victory
+                self.campaign.diplomacy.battle_opinion_update(enemy_name, True)
+
                 self.campaign.remove_army(self.current_enemy)
                 self.campaign.player_army.gold += self.battle_stats.get("loot_gold", 0)
             # Apply casualties to player army (survivors persist)
@@ -260,6 +292,23 @@ class Game:
         else:
             # Defeat: apply casualties (survivors persist, but losses are real)
             self.campaign.player_army.apply_battle_results(self.battle)
+
+            # D6: Player is captured (not killed) on defeat
+            if self.current_enemy:
+                enemy_name = self.current_enemy.general_name
+                enemy_team = self.current_enemy.team
+
+                # B6: Enemy general gains loyalty from winning
+                gm.on_battle_win(enemy_name)
+
+                # B12: Update general opinion on player defeat
+                self.campaign.diplomacy.battle_opinion_update(enemy_name, False)
+
+                # D6: Player capture
+                gm.capture_player(enemy_team)
+                self.campaign._add_notification(
+                    f"You have been captured by {enemy_name}! "
+                    f"Pay ransom or wait to escape.")
 
         self.current_enemy = None
         self.battle = None

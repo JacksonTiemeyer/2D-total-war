@@ -67,6 +67,8 @@ def save_campaign(campaign_scene):
         "roaming": campaign_scene.roaming_manager.serialize(),
         # B3: Quest system
         "quests": campaign_scene.quest_manager.serialize(),
+        # B6/D6: General management (loyalty, betrayal, prisoners)
+        "generals": campaign_scene.general_manager.serialize(),
         # Camera position
         "camera": {
             "x": campaign_scene.camera.x,
@@ -241,6 +243,25 @@ def restore_campaign_scene(data):
     scene.show_quest_log = False
     if "quests" in data:
         scene.quest_manager.deserialize(data["quests"])
+
+    # B6/D6: General management system
+    from campaign.generals import GeneralManager
+    scene.general_manager = GeneralManager()
+    scene.show_persuasion = False
+    scene.persuasion_target = None
+    scene.show_prisoners = False
+    scene.prisoner_action_msg = None
+    scene.prisoner_action_timer = 0
+    if "generals" in data:
+        scene.general_manager.deserialize(data["generals"])
+    else:
+        # Register existing generals if loading from older save
+        for army in scene.armies:
+            if not army.is_player:
+                ai = scene.ai_controllers.get(id(army))
+                personality = ai.personality if ai else "cautious"
+                scene.general_manager.register_general(
+                    army.general_name, army.team, personality, army.general_level)
 
     scene._add_notification = lambda text: scene.notifications.append((text, 300))
     scene._add_notification("Campaign loaded!")

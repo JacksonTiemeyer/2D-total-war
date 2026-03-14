@@ -220,3 +220,34 @@ REST_REPLENISH_RATE = 0.2      # fraction of missing soldiers restored per day
 MERCENARY_COST_MULTIPLIER = 1.5  # mercs cost 50% more
 TAVERN_RUMORS_COUNT = 3
 TAVERN_MERCS_COUNT = 3
+
+# B6: General Betrayal & Persuasion
+LOYALTY_DEFAULT = 70              # starting loyalty for new generals
+LOYALTY_MIN = 0
+LOYALTY_MAX = 100
+LOYALTY_BETRAY_THRESHOLD = 30     # below this, general may defect
+LOYALTY_BETRAY_CHANCE_BASE = 0.02 # daily chance at exactly threshold
+LOYALTY_BETRAY_AMBITIOUS_MULT = 2.0  # ambitious generals defect more
+LOYALTY_BETRAY_LOYAL_MULT = 0.3   # loyal generals rarely defect
+LOYALTY_BATTLE_WIN_BONUS = 3      # loyalty gained on winning battle
+LOYALTY_BATTLE_LOSS_PENALTY = 5   # loyalty lost on losing battle
+PERSUASION_RANGE = 120            # world distance to attempt persuasion
+BRIBE_COST_BASE = 100             # base gold cost for bribe
+BRIBE_LOYALTY_GAIN = 15           # loyalty toward player per bribe
+BRIBE_FACTION_LOYALTY_LOSS = 10   # loyalty toward own faction lost per bribe
+CONVINCE_BASE_CHANCE = 0.3        # base success chance for convince
+CONVINCE_REP_BONUS = 0.005        # added chance per player reputation point
+THREATEN_BASE_CHANCE = 0.4        # base success for threaten on cautious
+THREATEN_BACKFIRE_CHANCE = 0.5    # chance threaten backfires on aggressive
+
+# D6: Prisoner & Ransom System
+CAPTURE_CHANCE_BASE = 0.50        # base chance to capture defeated general
+CAPTURE_CHANCE_DECISIVE = 0.75    # capture chance if battle was decisive
+PLAYER_CAPTURE_DAYS = 5           # days player is held captive
+PLAYER_CAPTURE_RANSOM_BASE = 300  # base ransom cost for player
+PLAYER_CAPTURE_DISBAND_RATE = 0.3 # fraction of army that disbands during capture
+RANSOM_GOLD_BASE = 200            # base gold received for ransoming a general
+RECRUIT_PRISONER_BASE_CHANCE = 0.25  # base chance to recruit a prisoner
+EXECUTE_REP_PENALTY_FACTION = -30 # reputation hit with prisoner's faction
+EXECUTE_REP_PENALTY_ALL = -5      # reputation hit with all factions
+EXECUTE_INTIMIDATION_BONUS = 10   # morale bonus in next battle after execution

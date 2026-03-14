@@ -26,6 +26,7 @@ from core.settings import (
     INCOME_PER_SETTLEMENT,
     FACTION_JOIN_THRESHOLD, FACTION_LEAVE_PENALTY,
     REST_COST_PER_DAY,
+    PERSUASION_RANGE,
 )
 from core.camera import Camera
 from core.utils import distance, point_in_rect
@@ -40,6 +41,7 @@ from campaign.quest import QuestManager
 from data.unit_types import ALL_RECRUITABLE, GENERAL_ROSTER
 from campaign.faction import FACTION_ROSTER, FACTION_BY_TEAM
 from campaign.diplomacy import DiplomacyManager, DiplomacyState
+from campaign.generals import GeneralManager
 
 
 class CampaignScene:
@@ -104,8 +106,17 @@ class CampaignScene:
         # B3: Quest system
         self.quest_manager = QuestManager()
 
+        # B6/D6: General management (loyalty, betrayal, prisoners)
+        self.general_manager = GeneralManager()
+        self.show_persuasion = False      # persuasion dialog overlay
+        self.persuasion_target = None     # army being persuaded
+        self.show_prisoners = False       # prisoner management overlay
+        self.prisoner_action_msg = None   # feedback message for prisoner actions
+        self.prisoner_action_timer = 0
+
         self._generate_world()
         self._init_ai_controllers()
+        self._register_generals()
         self._add_notification("You begin as an independent lord. Visit settlements to recruit and trade!")
 
     def _add_notification(self, text):
@@ -242,6 +253,18 @@ class CampaignScene:
         if getattr(self, 'show_army_panel', False):
             return self._handle_army_panel_event(event)
 
+        # B6: Persuasion overlay
+        if getattr(self, 'show_persuasion', False):
+            return self._handle_persuasion_event(event)
+
+        # D6: Prisoner management overlay
+        if getattr(self, 'show_prisoners', False):
+            return self._handle_prisoner_event(event)
+
+        # D6: Player capture overlay
+        if self.general_manager.player_capture.is_captured:
+            return self._handle_capture_event(event)
+
         self.camera.handle_event(event)
 
         if event.type == pygame.KEYDOWN:
@@ -273,6 +296,14 @@ class CampaignScene:
                 self.show_quest_log = not getattr(self, 'show_quest_log', False)
             elif event.key == pygame.K_a:
                 self.show_army_panel = not getattr(self, 'show_army_panel', False)
+            elif event.key == pygame.K_p:
+                self._try_persuasion()
+            elif event.key == pygame.K_j:
+                if self.general_manager.player_prisoners:
+                    self.show_prisoners = True
+                    self.paused = True
+                else:
+                    self._add_notification("No prisoners held.")
             elif event.key == pygame.K_s and (pygame.key.get_mods() & pygame.KMOD_CTRL):
                 self._save_game()
 
@@ -337,6 +368,10 @@ class CampaignScene:
             self._try_open_recruitment()
 
     def _handle_right_click(self, pos):
+        # D6: Can't move while captured
+        if self.general_manager.player_capture.is_captured:
+            self._add_notification("Cannot move while captured!")
+            return
         wx, wy = self.camera.screen_to_world(*pos)
         self.player_army.give_move_order(wx, wy)
 
@@ -514,6 +549,30 @@ class CampaignScene:
         for q in failed:
             self._add_notification(f"Quest Failed: {q.title}")
 
+        # B6: Check for general betrayals
+        betrayals = self.general_manager.check_betrayals(
+            self.armies, self.ai_controllers, self.diplomacy,
+            self._add_notification)
+        for army, action in betrayals:
+            new_team = self.general_manager.process_betrayal(
+                army, action, self.armies, self.ai_controllers,
+                self.factions, self.diplomacy)
+            # Re-key the AI controller since id may stay the same
+            # but update internal refs
+            ai = self.ai_controllers.get(id(army))
+            if ai:
+                ai.army = army
+
+        # D6: Update prisoner timers
+        self.general_manager.update_prisoners()
+
+        # D6: Update player capture state
+        if self.general_manager.player_capture.is_captured:
+            escaped = self.general_manager.update_player_capture(self.player_army)
+            if escaped:
+                self._add_notification(
+                    "You have escaped captivity! Your army is weakened.")
+
         # Mark fog as needing update
         self._fog_needs_update = True
         self._territory_needs_update = True
@@ -523,6 +582,16 @@ class CampaignScene:
         for army in self.armies:
             if not army.is_player:
                 self.ai_controllers[id(army)] = ArmyAI(army, pick_personality())
+
+    def _register_generals(self):
+        """B6: Register all NPC generals with the GeneralManager."""
+        for army in self.armies:
+            if army.is_player:
+                continue
+            ai = self.ai_controllers.get(id(army))
+            personality = ai.personality if ai else "cautious"
+            self.general_manager.register_general(
+                army.general_name, army.team, personality, army.general_level)
 
     def _get_ai(self, army):
         """Get or create AI controller for an army."""
@@ -760,6 +829,18 @@ class CampaignScene:
         if getattr(self, 'show_army_panel', False):
             self._draw_army_panel(surface)
 
+        # B6: Persuasion dialog
+        if getattr(self, 'show_persuasion', False):
+            self._draw_persuasion(surface)
+
+        # D6: Prisoner management
+        if getattr(self, 'show_prisoners', False):
+            self._draw_prisoners(surface)
+
+        # D6: Player capture overlay (drawn last, blocks everything)
+        if self.general_manager.player_capture.is_captured:
+            self._draw_capture_overlay(surface)
+
     def _draw_territory_borders(self, surface):
         """B4: Draw faction territory as colored regions around settlements."""
         # Use a simple approach: draw colored circles/polygons around each faction's settlements
@@ -966,7 +1047,7 @@ class CampaignScene:
         # Controls
         ctrl_text = small_font.render(
             "[RMB] Move [E] Settlement [R] Recruit [D] Diplomacy "
-            "[Q] Quests [A] Army [SPACE] Pause [1/2/3] Speed",
+            "[Q] Quests [A] Army [P] Persuade [J] Prisoners [SPACE] Pause",
             True, (180, 180, 180))
         surface.blit(ctrl_text, (10, SCREEN_HEIGHT - 30))
 
@@ -1218,6 +1299,334 @@ class CampaignScene:
         footer = tiny.render("[Q] Close  |  Accept quests at settlement bounty boards", True, (150, 150, 150))
         surface.blit(footer, (panel_x + panel_w // 2 - footer.get_width() // 2,
                               panel_y + panel_h - 25))
+
+    # ------------------------------------------------------------------
+    # B6: Persuasion UI
+    # ------------------------------------------------------------------
+
+    def _try_persuasion(self):
+        """B6: Try to open persuasion dialog with a nearby non-hostile army."""
+        if self.general_manager.player_capture.is_captured:
+            self._add_notification("Cannot persuade while captured!")
+            return
+        for army in self.armies:
+            if army.is_player or army.team == 0:
+                continue
+            # Must not be at war
+            if self._are_hostile(0, army.team):
+                continue
+            if distance(self.player_army.x, self.player_army.y,
+                        army.x, army.y) < PERSUASION_RANGE:
+                self.persuasion_target = army
+                self.show_persuasion = True
+                self.paused = True
+                return
+        self._add_notification("No generals nearby to persuade. Move closer to a non-hostile army.")
+
+    def _handle_persuasion_event(self, event):
+        """Handle input on the persuasion dialog."""
+        if event.type != pygame.KEYDOWN:
+            return None
+        if event.key == pygame.K_ESCAPE:
+            self.show_persuasion = False
+            self.persuasion_target = None
+            self.paused = False
+            return None
+
+        target = self.persuasion_target
+        if target is None:
+            self.show_persuasion = False
+            return None
+
+        name = target.general_name
+        gm = self.general_manager
+
+        if event.key == pygame.K_1:
+            # Bribe
+            success, msg = gm.attempt_bribe(name, self.player_army, self.diplomacy)
+            self._add_notification(msg)
+        elif event.key == pygame.K_2:
+            # Convince
+            success, msg = gm.attempt_convince(name, self.player_army, self.diplomacy)
+            self._add_notification(msg)
+        elif event.key == pygame.K_3:
+            # Threaten
+            success, msg = gm.attempt_threaten(name, self.player_army, self.diplomacy)
+            self._add_notification(msg)
+        else:
+            return None
+
+        # Close after action
+        self.show_persuasion = False
+        self.persuasion_target = None
+        self.paused = False
+        return None
+
+    def _draw_persuasion(self, surface):
+        """B6: Draw persuasion dialog overlay."""
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 140))
+        surface.blit(overlay, (0, 0))
+
+        target = self.persuasion_target
+        if target is None:
+            return
+
+        panel_w, panel_h = 460, 340
+        panel_x = SCREEN_WIDTH // 2 - panel_w // 2
+        panel_y = 100
+        pygame.draw.rect(surface, (30, 30, 40), (panel_x, panel_y, panel_w, panel_h))
+        pygame.draw.rect(surface, GOLD, (panel_x, panel_y, panel_w, panel_h), 2)
+
+        font = pygame.font.SysFont(None, 28)
+        small = pygame.font.SysFont(None, 20)
+        tiny = pygame.font.SysFont(None, 16)
+
+        title = font.render("Persuade General", True, GOLD)
+        surface.blit(title, (panel_x + panel_w // 2 - title.get_width() // 2, panel_y + 10))
+
+        y = panel_y + 50
+        name = target.general_name
+        gm = self.general_manager
+        info = gm.generals.get(name, {})
+        loyalty = info.get("loyalty", 70)
+        personality = info.get("personality", "unknown")
+        gen_opinion = self.diplomacy.get_general_opinion(name)
+        faction_name = "Unknown"
+        for f in self.factions:
+            if f.team == target.team:
+                faction_name = f.name
+                break
+
+        # General info
+        name_text = small.render(f"General: {name}", True, WHITE)
+        surface.blit(name_text, (panel_x + 20, y))
+        y += 22
+        faction_text = small.render(f"Faction: {faction_name}", True,
+                                     TEAM_COLORS.get(target.team, GREY))
+        surface.blit(faction_text, (panel_x + 20, y))
+        y += 22
+        pers_text = small.render(f"Personality: {personality}", True, (180, 180, 180))
+        surface.blit(pers_text, (panel_x + 20, y))
+        y += 22
+        loyalty_color = (100, 200, 100) if loyalty > 50 else (200, 200, 60) if loyalty > 30 else (200, 80, 80)
+        loyalty_text = small.render(f"Loyalty to faction: {loyalty}", True, loyalty_color)
+        surface.blit(loyalty_text, (panel_x + 20, y))
+        y += 22
+        op_color = (100, 200, 100) if gen_opinion > 0 else (200, 100, 100) if gen_opinion < 0 else (150, 150, 150)
+        opinion_text = small.render(f"Opinion of you: {gen_opinion:+d}", True, op_color)
+        surface.blit(opinion_text, (panel_x + 20, y))
+        y += 30
+
+        # Options
+        pygame.draw.line(surface, (80, 80, 100), (panel_x + 10, y), (panel_x + panel_w - 10, y))
+        y += 10
+
+        from core.settings import BRIBE_COST_BASE
+        bribe_cost = BRIBE_COST_BASE
+        if personality == "greedy":
+            bribe_cost = int(bribe_cost * 0.7)
+        elif personality == "loyal":
+            bribe_cost = int(bribe_cost * 1.5)
+
+        options = [
+            (f"[1] Bribe ({bribe_cost} gold)", (255, 215, 0)),
+            ("[2] Convince (persuasion check)", (100, 200, 255)),
+            ("[3] Threaten (risky on aggressive)", (255, 100, 100)),
+        ]
+        for text, color in options:
+            opt = small.render(text, True, color)
+            surface.blit(opt, (panel_x + 30, y))
+            y += 28
+
+        footer = tiny.render("[ESC] Cancel  |  Press 1/2/3 to choose", True, (150, 150, 150))
+        surface.blit(footer, (panel_x + panel_w // 2 - footer.get_width() // 2,
+                              panel_y + panel_h - 25))
+
+    # ------------------------------------------------------------------
+    # D6: Prisoner management UI
+    # ------------------------------------------------------------------
+
+    def _handle_prisoner_event(self, event):
+        """Handle input on the prisoner management panel."""
+        if event.type != pygame.KEYDOWN:
+            return None
+        if event.key == pygame.K_ESCAPE or event.key == pygame.K_j:
+            self.show_prisoners = False
+            self.paused = False
+            self.prisoner_action_msg = None
+            return None
+
+        gm = self.general_manager
+        prisoners = gm.player_prisoners
+
+        if not prisoners:
+            self.show_prisoners = False
+            self.paused = False
+            return None
+
+        # Number keys select prisoner (1-indexed)
+        if pygame.K_1 <= event.key <= pygame.K_9:
+            idx = event.key - pygame.K_1
+            if idx < len(prisoners):
+                # Store selected prisoner index for sub-actions
+                self._prisoner_selected = idx
+                self.prisoner_action_msg = f"Selected {prisoners[idx].general_name}. [R]ansom / [C]recruit / [X]execute"
+                self.prisoner_action_timer = 300
+            return None
+
+        selected = getattr(self, '_prisoner_selected', None)
+        if selected is not None and selected < len(prisoners):
+            if event.key == pygame.K_r:
+                # Ransom
+                gold, msg = gm.ransom_prisoner(selected, self.diplomacy)
+                if gold > 0:
+                    self.player_army.gold += gold
+                self._add_notification(msg)
+                self.prisoner_action_msg = msg
+                self.prisoner_action_timer = 180
+                self._prisoner_selected = None
+            elif event.key == pygame.K_c:
+                # Recruit
+                success, msg, prisoner_data = gm.recruit_prisoner(selected, self.diplomacy)
+                self._add_notification(msg)
+                self.prisoner_action_msg = msg
+                self.prisoner_action_timer = 180
+                self._prisoner_selected = None
+            elif event.key == pygame.K_x:
+                # Execute
+                msg = gm.execute_prisoner(selected, self.diplomacy, self.factions)
+                self._add_notification(msg)
+                self.prisoner_action_msg = msg
+                self.prisoner_action_timer = 180
+                self._prisoner_selected = None
+
+        if not gm.player_prisoners:
+            self.show_prisoners = False
+            self.paused = False
+
+        return None
+
+    def _draw_prisoners(self, surface):
+        """D6: Draw prisoner management panel."""
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 140))
+        surface.blit(overlay, (0, 0))
+
+        gm = self.general_manager
+        prisoners = gm.player_prisoners
+
+        panel_w, panel_h = 500, 420
+        panel_x = SCREEN_WIDTH // 2 - panel_w // 2
+        panel_y = 80
+        pygame.draw.rect(surface, (30, 30, 40), (panel_x, panel_y, panel_w, panel_h))
+        pygame.draw.rect(surface, GOLD, (panel_x, panel_y, panel_w, panel_h), 2)
+
+        font = pygame.font.SysFont(None, 28)
+        small = pygame.font.SysFont(None, 20)
+        tiny = pygame.font.SysFont(None, 16)
+
+        title = font.render("Prisoners", True, GOLD)
+        surface.blit(title, (panel_x + panel_w // 2 - title.get_width() // 2, panel_y + 10))
+
+        y = panel_y + 50
+        if not prisoners:
+            t = small.render("No prisoners held.", True, (150, 150, 150))
+            surface.blit(t, (panel_x + 20, y))
+        else:
+            selected = getattr(self, '_prisoner_selected', None)
+            for i, p in enumerate(prisoners):
+                is_selected = (i == selected)
+                bg = (50, 50, 70) if is_selected else (35, 35, 50)
+                row_rect = (panel_x + 10, y, panel_w - 20, 40)
+                pygame.draw.rect(surface, bg, row_rect)
+                if is_selected:
+                    pygame.draw.rect(surface, GOLD, row_rect, 1)
+
+                faction_name = "Unknown"
+                for f in self.factions:
+                    if f.team == p.faction_team:
+                        faction_name = f.name
+                        break
+
+                name_text = small.render(
+                    f"[{i+1}] {p.general_name} (Lv{p.general_level})", True, WHITE)
+                surface.blit(name_text, (panel_x + 15, y + 2))
+
+                info_text = tiny.render(
+                    f"    {faction_name} | {p.personality} | Held {p.days_held} days",
+                    True, (160, 160, 160))
+                surface.blit(info_text, (panel_x + 15, y + 22))
+                y += 44
+
+        # Action message
+        if getattr(self, 'prisoner_action_msg', None):
+            y += 10
+            msg_text = small.render(self.prisoner_action_msg, True, (255, 220, 100))
+            surface.blit(msg_text, (panel_x + 15, y))
+
+        footer = tiny.render(
+            "[1-9] Select  |  [R]ansom [C]recruit [X]execute  |  [J/ESC] Close",
+            True, (150, 150, 150))
+        surface.blit(footer, (panel_x + panel_w // 2 - footer.get_width() // 2,
+                              panel_y + panel_h - 25))
+
+    # ------------------------------------------------------------------
+    # D6: Player capture UI
+    # ------------------------------------------------------------------
+
+    def _handle_capture_event(self, event):
+        """Handle input while player is captured."""
+        if event.type != pygame.KEYDOWN:
+            return None
+        if event.key == pygame.K_r:
+            success, msg = self.general_manager.pay_player_ransom(self.player_army)
+            self._add_notification(msg)
+        return None
+
+    def _draw_capture_overlay(self, surface):
+        """D6: Draw player capture state overlay."""
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 180))
+        surface.blit(overlay, (0, 0))
+
+        cap = self.general_manager.player_capture
+        font = pygame.font.SysFont(None, 40)
+        small = pygame.font.SysFont(None, 24)
+        tiny = pygame.font.SysFont(None, 18)
+
+        title = font.render("YOU ARE CAPTURED", True, (220, 60, 60))
+        surface.blit(title, (SCREEN_WIDTH // 2 - title.get_width() // 2, 200))
+
+        captor_name = "Unknown"
+        for f in self.factions:
+            if f.team == cap.captor_team:
+                captor_name = f.name
+                break
+
+        y = 260
+        info_lines = [
+            f"Held by: {captor_name}",
+            f"Days remaining: {cap.days_remaining}",
+            f"Ransom cost: {cap.ransom_cost} gold (you have {self.player_army.gold})",
+            "",
+            "Your army is dispersing while you are held captive.",
+            "You will automatically escape when the timer runs out,",
+            "but your army will be weakened.",
+        ]
+        for line in info_lines:
+            text = small.render(line, True, WHITE)
+            surface.blit(text, (SCREEN_WIDTH // 2 - text.get_width() // 2, y))
+            y += 28
+
+        if self.player_army.gold >= cap.ransom_cost:
+            opt = small.render("[R] Pay Ransom", True, GOLD)
+        else:
+            opt = small.render("[R] Pay Ransom (not enough gold)", True, (120, 120, 120))
+        surface.blit(opt, (SCREEN_WIDTH // 2 - opt.get_width() // 2, y + 20))
+
+        wait = tiny.render("Or wait for automatic escape...", True, (150, 150, 150))
+        surface.blit(wait, (SCREEN_WIDTH // 2 - wait.get_width() // 2, y + 50))
 
     def _handle_army_panel_event(self, event):
         """C4: Handle army management panel input."""
