@@ -11,7 +11,9 @@ Controls:
     LMB         - Select settlement/army
     R           - Open recruitment (near friendly settlement)
     G           - Cycle general type
-    ENTER       - End turn
+    D           - Diplomacy
+    SPACE       - Pause/Resume
+    1/2/3       - Campaign speed (1x/2x/4x)
 
   Battle:
     LMB/Drag    - Select squads
@@ -222,9 +224,12 @@ class Game:
                 "kills": g.kills, "duels_won": g.duels_won,
                 "level": g.level, "alive": g.alive,
             })
-        # Loot calculation
+        # B10: Loot calculation - scales with enemy army strength
         if b.result == BattleResult.PLAYER_WIN and self.current_enemy:
-            stats["loot_gold"] = 50 + len(self.current_enemy.squads) * 20
+            base_loot = 50
+            strength_loot = self.current_enemy.army_strength // 5
+            squad_loot = len(self.current_enemy.squads) * 15
+            stats["loot_gold"] = base_loot + strength_loot + squad_loot
         # MVP squad
         all_player = stats["player_squads"]
         if all_player:
