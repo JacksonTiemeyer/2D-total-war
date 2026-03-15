@@ -40,6 +40,7 @@ class GameState:
     PRE_BATTLE = "pre_battle"
     POST_BATTLE = "post_battle"
     SKIRMISH_SETUP = "skirmish_setup"
+    CHARACTER_CREATION = "character_creation"
 
 
 class Game:
@@ -58,6 +59,8 @@ class Game:
         self.is_skirmish = False   # true when battle launched from skirmish mode
         self.is_siege = False      # true when battle is a siege
         self.battle_terrain_type = None  # D1: terrain from campaign map
+        self.char_creation = None  # character creation screen
+        self.player_character = None  # PlayerCharacter instance
 
     def run(self):
         while self.running:
@@ -76,6 +79,8 @@ class Game:
 
             if self.state == GameState.MAIN_MENU:
                 self._handle_menu_event(event)
+            elif self.state == GameState.CHARACTER_CREATION:
+                self._handle_char_creation_event(event)
             elif self.state == GameState.CAMPAIGN:
                 self.campaign.handle_event(event)
             elif self.state == GameState.PRE_BATTLE:
@@ -90,8 +95,9 @@ class Game:
     def _handle_menu_event(self, event):
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_RETURN or event.key == pygame.K_SPACE:
-                self.campaign = CampaignScene()
-                self.state = GameState.CAMPAIGN
+                from campaign.char_creation import CharacterCreation
+                self.char_creation = CharacterCreation()
+                self.state = GameState.CHARACTER_CREATION
             elif event.key == pygame.K_c:
                 # Continue from save
                 from core.save_system import load_campaign, restore_campaign_scene
@@ -106,6 +112,20 @@ class Game:
                 self.state = GameState.SKIRMISH_SETUP
             elif event.key == pygame.K_ESCAPE:
                 self.running = False
+
+    def _handle_char_creation_event(self, event):
+        if not self.char_creation:
+            return
+        result = self.char_creation.handle_event(event)
+        if result == "back_to_menu":
+            self.char_creation = None
+            self.state = GameState.MAIN_MENU
+        elif result is not None and result != "back_to_menu":
+            # Character created — start campaign with this character
+            self.player_character = result
+            self.campaign = CampaignScene(player_character=result)
+            self.char_creation = None
+            self.state = GameState.CAMPAIGN
 
     def _handle_pre_battle_event(self, event):
         if event.type == pygame.KEYDOWN:
@@ -305,6 +325,10 @@ class Game:
 
                 self.campaign.remove_army(self.current_enemy)
                 self.campaign.player_army.gold += self.battle_stats.get("loot_gold", 0)
+                # Player trait bonus
+                if self.player_character and self.player_character.trait == "scrapper":
+                    bonus = int(self.battle_stats.get("loot_gold", 0) * 0.25)
+                    self.campaign.player_army.gold += bonus
             # Apply casualties to player army (survivors persist)
             self.campaign.player_army.apply_battle_results(self.battle)
         else:
@@ -365,9 +389,19 @@ class Game:
         if new_level > pa.general_level:
             pa.general_level = new_level
 
+        # Award XP to player character as well
+        if self.player_character:
+            levels_gained = self.player_character.add_xp(xp)
+            if levels_gained > 0:
+                self.campaign._add_notification(
+                    f"Level up! You are now level {self.player_character.level} ({self.player_character.tier_name})")
+
     def _draw(self):
         if self.state == GameState.MAIN_MENU:
             self._draw_menu()
+        elif self.state == GameState.CHARACTER_CREATION:
+            if self.char_creation:
+                self.char_creation.draw(self.screen)
         elif self.state == GameState.CAMPAIGN:
             self.campaign.draw(self.screen)
         elif self.state == GameState.PRE_BATTLE:
@@ -392,16 +426,16 @@ class Game:
 
         # Subtitle
         font = get_font(28)
-        sub = font.render("A Total War x Mount & Blade Prototype", True, (180, 170, 140))
+        sub = font.render("A Fantasy Strategy RPG", True, (180, 170, 140))
         self.screen.blit(sub, (SCREEN_WIDTH // 2 - sub.get_width() // 2, 240))
 
         # Features
         small = get_font(22)
         features = [
-            "Squad-based tactical combat with formations and morale",
-            "Three Kingdoms-style general dueling system",
-            "Mount & Blade campaign map with roaming armies",
-            "Settlement capture and squad recruitment",
+            "11 playable races from Elves to Undead",
+            "Squad-based tactical combat with magic and formations",
+            "Mount & Blade campaign with 75 settlements",
+            "Level 1-50 progression from wanderer to overlord",
         ]
         y = 310
         for f in features:

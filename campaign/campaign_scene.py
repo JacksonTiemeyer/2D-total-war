@@ -44,7 +44,7 @@ from core.camera import Camera
 from core.utils import distance, point_in_rect, get_font
 from campaign.settlement import Settlement, SettlementType
 from campaign.army import (
-    Army, create_default_player_army, create_enemy_army,
+    Army, create_default_player_army, create_racial_player_army, create_enemy_army,
 )
 from campaign.settlement_ui import SettlementInteraction
 from campaign.ai_controller import ArmyAI, pick_personality, AITask
@@ -54,10 +54,11 @@ from data.unit_types import ALL_RECRUITABLE, GENERAL_ROSTER
 from campaign.faction import FACTION_ROSTER, FACTION_BY_TEAM
 from campaign.diplomacy import DiplomacyManager, DiplomacyState
 from campaign.generals import GeneralManager
+from campaign.player import PlayerCharacter, get_tier_for_level
 
 
 class CampaignScene:
-    def __init__(self):
+    def __init__(self, player_character=None):
         self.camera = Camera(CAMPAIGN_MAP_WIDTH, CAMPAIGN_MAP_HEIGHT)
         self.camera.center_on(CAMPAIGN_MAP_WIDTH / 2, CAMPAIGN_MAP_HEIGHT / 2)
 
@@ -70,7 +71,22 @@ class CampaignScene:
         # Legacy turn counter (for save compat)
         self.turn = 1
 
-        self.player_army = create_default_player_army()
+        # Phase 3: Player character integration
+        self.player_character = player_character
+        if player_character:
+            self.player_army = create_racial_player_army(player_character)
+            # Set starting position based on race
+            start_pos = self._get_race_start_position(player_character.race)
+            self.player_army.x, self.player_army.y = start_pos
+            self.player_army.target_x = self.player_army.x
+            self.player_army.target_y = self.player_army.y
+            # Apply starting trait bonuses
+            if player_character.trait == "veteran_campaigner":
+                self.player_army.general_level = 3
+            self.camera.center_on(self.player_army.x, self.player_army.y)
+        else:
+            self.player_army = create_default_player_army()
+
         self.armies = [self.player_army]
         self.settlements = []
         self.selected_settlement = None
@@ -174,6 +190,23 @@ class CampaignScene:
     def _add_notification(self, text):
         """Add a notification to the feed."""
         self.notifications.append((text, self.NOTIFICATION_DURATION))
+
+    def _get_race_start_position(self, race_id):
+        """Return (x, y) starting position for a given race on the 6000x4500 map."""
+        positions = {
+            "human": (2400, 1600),       # Central Plains
+            "high_elf": (4600, 1300),    # Eastern Highlands
+            "wood_elf": (600, 800),      # Northwest Forests
+            "sea_elf": (600, 3600),      # Southwest Coast
+            "snow_elf": (2200, 400),     # Far North Tundra
+            "dark_elf": (1400, 3800),    # Underground South
+            "dwarf": (4400, 500),        # Northeast Mountains
+            "orc": (4800, 3500),         # Southeast Wastes
+            "undead": (3400, 2700),      # Cursed Lands
+            "troll_ogre": (3600, 3100),  # Wild Mountains
+            "beastfolk": (2200, 3600),   # Southern Steppes
+        }
+        return positions.get(race_id, (3000, 2250))  # center fallback
 
     def _generate_world(self):
         """Generate campaign map with 70+ settlements across 13 racial factions."""

@@ -2,17 +2,16 @@
 
 Displayed as a new game state between MAIN_MENU and CAMPAIGN.
 Produces a PlayerCharacter object that gets attached to the campaign.
-
-Full implementation in Batch 9.
 """
 
 import pygame
-from core.settings import SCREEN_WIDTH, SCREEN_HEIGHT, WHITE, BLACK, GOLD
+from core.settings import SCREEN_WIDTH, SCREEN_HEIGHT, WHITE, BLACK, GOLD, TEAM_COLORS
 from core.utils import get_font
 from campaign.player import (
     PlayerCharacter, ALL_CLASSES, CLASS_DESCRIPTIONS, PLAYER_TRAITS,
 )
-from data.races import ALL_PLAYABLE_RACES
+from data.races import ALL_PLAYABLE_RACES, RACE_DEFINITIONS
+from data.unit_types import RACE_ROSTER
 
 
 # ── Creation Steps ──────────────────────────────────────────────────────
@@ -35,6 +34,13 @@ RACE_DISPLAY_NAMES = {
     "undead": "Undead",
     "troll_ogre": "Troll / Ogre",
     "beastfolk": "Beastfolk",
+}
+
+# Team index for race color lookup
+_RACE_TEAM = {
+    "human": 1, "high_elf": 2, "wood_elf": 3, "sea_elf": 4,
+    "snow_elf": 5, "dark_elf": 6, "dwarf": 7, "orc": 8,
+    "undead": 9, "troll_ogre": 10, "beastfolk": 11,
 }
 
 CLASS_DISPLAY_NAMES = {
@@ -186,19 +192,64 @@ class CharacterCreation:
 
     def _draw_race_select(self, surface, font, small):
         header = font.render("Choose Your Race", True, WHITE)
-        surface.blit(header, (SCREEN_WIDTH // 2 - header.get_width() // 2, 100))
+        surface.blit(header, (SCREEN_WIDTH // 2 - header.get_width() // 2, 80))
+        tiny = get_font(15)
 
         races = list(ALL_PLAYABLE_RACES)
-        y = 160
+        # Left column: race list
+        y = 130
         for i, race_id in enumerate(races):
             color = GOLD if i == self._race_index else WHITE
+            team = _RACE_TEAM.get(race_id, 0)
+            race_color = TEAM_COLORS.get(team, WHITE)
             name = RACE_DISPLAY_NAMES.get(race_id, race_id)
-            text = small.render(f"{'> ' if i == self._race_index else '  '}{name}", True, color)
-            surface.blit(text, (SCREEN_WIDTH // 2 - 100, y))
-            y += 26
+            prefix = "> " if i == self._race_index else "  "
+            text = small.render(f"{prefix}{name}", True, color)
+            surface.blit(text, (80, y))
+            # Color swatch
+            pygame.draw.rect(surface, race_color, (60, y + 2, 12, 12))
+            y += 24
+
+        # Right panel: selected race details
+        selected_race = races[self._race_index]
+        race_def = RACE_DEFINITIONS.get(selected_race)
+        panel_x = SCREEN_WIDTH // 2 + 20
+        py = 130
+        # Race name large
+        race_name = RACE_DISPLAY_NAMES.get(selected_race, selected_race)
+        name_text = font.render(race_name, True, GOLD)
+        surface.blit(name_text, (panel_x, py))
+        py += 34
+        # Description
+        if race_def:
+            desc = small.render(race_def.description, True, (180, 180, 160))
+            surface.blit(desc, (panel_x, py))
+            py += 26
+            region = tiny.render(f"Starting Region: {race_def.starting_region}", True, (140, 140, 140))
+            surface.blit(region, (panel_x, py))
+            py += 22
+        # Starting units
+        roster = RACE_ROSTER.get(selected_race, [])
+        if roster:
+            py += 10
+            units_hdr = small.render("Available Units:", True, (150, 200, 255))
+            surface.blit(units_hdr, (panel_x, py))
+            py += 24
+            for unit in roster[:6]:
+                traits_str = ", ".join(unit.traits) if unit.traits else ""
+                info = f"{unit.name} (HP:{unit.health} ATK:{unit.melee_attack} DEF:{unit.melee_defense}"
+                if unit.ranged_attack:
+                    info += f" RNG:{unit.ranged_attack}"
+                info += f" x{unit.squad_size})"
+                ut = tiny.render(info, True, (170, 170, 160))
+                surface.blit(ut, (panel_x + 10, py))
+                py += 18
+            if len(roster) > 6:
+                more = tiny.render(f"  ...and {len(roster) - 6} more", True, (120, 120, 120))
+                surface.blit(more, (panel_x + 10, py))
 
         hint = small.render("[UP/DOWN] Navigate   [ENTER] Select   [ESC] Back", True, (120, 120, 120))
-        surface.blit(hint, (SCREEN_WIDTH // 2 - hint.get_width() // 2, SCREEN_HEIGHT - 50))
+        surface.blit(hint, (SCREEN_WIDTH // 2 - hint.get_width() // 2, SCREEN_HEIGHT - 40))
 
     def _draw_class_select(self, surface, font, small):
         header = font.render("Choose Your Class", True, WHITE)

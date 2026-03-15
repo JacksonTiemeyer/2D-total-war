@@ -8,18 +8,25 @@ from data.unit_types import (
     ALL_RECRUITABLE, GENERAL_ROSTER,
     GENERAL_COMMANDER, GENERAL_CHAMPION, GENERAL_STRATEGIST,
     FACTION_SPECIALTY_UNITS,
+    RACE_ROSTER, RACE_HEROES,
 )
 
 SAVE_DIR = os.path.join(str(Path.home()), ".2d-total-war")
 SAVE_FILE = os.path.join(SAVE_DIR, "save.json")
 SAVE_VERSION = 2  # Bumped for Phase 2 additions
 
-# Build name -> UnitStats lookup (includes specialty units)
+# Build name -> UnitStats lookup (includes all racial and specialty units)
 _UNIT_LOOKUP = {u.name: u for u in ALL_RECRUITABLE}
 for units in FACTION_SPECIALTY_UNITS.values():
     for u in units:
         _UNIT_LOOKUP[u.name] = u
+for units in RACE_ROSTER.values():
+    for u in units:
+        _UNIT_LOOKUP[u.name] = u
 _GENERAL_LOOKUP = {u.name: u for u in GENERAL_ROSTER}
+for heroes in RACE_HEROES.values():
+    for u in heroes:
+        _GENERAL_LOOKUP[u.name] = u
 
 
 def _unit_from_name(name):
@@ -76,6 +83,10 @@ def save_campaign(campaign_scene):
             "zoom": campaign_scene.camera.zoom,
         },
     }
+
+    # Phase 3: Player character
+    if hasattr(campaign_scene, 'player_character') and campaign_scene.player_character:
+        data["player_character"] = campaign_scene.player_character.serialize()
 
     os.makedirs(SAVE_DIR, exist_ok=True)
     with open(SAVE_FILE, "w") as f:
@@ -287,6 +298,13 @@ def restore_campaign_scene(data):
     scene.tournament_towns = {}
     scene.active_tournament = None
     scene.show_tournament = False
+
+    # Phase 3: Restore player character
+    if "player_character" in data:
+        from campaign.player import PlayerCharacter
+        scene.player_character = PlayerCharacter.deserialize(data["player_character"])
+        # Also update army name
+        scene.player_army.general_name = scene.player_character.name
 
     # UI state missing from original restore
     scene.show_army_panel = False

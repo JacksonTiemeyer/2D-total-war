@@ -13,6 +13,7 @@ from core.utils import distance, normalize
 from data.unit_types import (
     SWORDSMEN, ARCHERS, SPEARMEN, MILITIA, LIGHT_CAVALRY,
     GENERAL_COMMANDER, GENERAL_CHAMPION, GENERAL_ROSTER,
+    RACE_ROSTER, RACE_HEROES,
 )
 
 
@@ -273,12 +274,73 @@ def create_default_player_army():
     return army
 
 
+def create_racial_player_army(player_character):
+    """Create player starting army based on race selection."""
+    from data.unit_types import RACE_ROSTER, RACE_HEROES
+    from campaign.player import get_tier_for_level
+    from core.settings import STARTING_GOLD
+
+    army = Army(f"{player_character.name}'s Warband", 0, 800, 800, is_player=True)
+    army.gold = STARTING_GOLD
+    if player_character.trait == "merchant_prince":
+        army.gold *= 2
+
+    # Set general stats from racial hero list
+    heroes = RACE_HEROES.get(player_character.race, GENERAL_ROSTER)
+    army.general_stats = heroes[0] if heroes else GENERAL_COMMANDER
+    army.general_name = player_character.name
+
+    # Get racial roster
+    roster = RACE_ROSTER.get(player_character.race, [])
+    if not roster:
+        # Fallback to human roster
+        roster = RACE_ROSTER.get("human", [SWORDSMEN, ARCHERS, LIGHT_CAVALRY])
+
+    # Pick 2-3 starting units from the race's roster (first few = basic units)
+    # Take first 2 basic units + 1 if roster is large enough
+    if len(roster) >= 3:
+        army.add_squad(roster[0])  # basic infantry
+        army.add_squad(roster[1])  # second unit type
+        army.add_squad(roster[2])  # third unit type
+    elif len(roster) >= 2:
+        army.add_squad(roster[0])
+        army.add_squad(roster[1])
+    else:
+        army.add_squad(roster[0])
+
+    return army
+
+
 def create_enemy_army(name, team, x, y, difficulty=1):
+    """Create an AI army using the appropriate racial roster."""
     army = Army(name, team, x, y)
-    army.general_stats = random.choice(GENERAL_ROSTER)
-    base_units = [MILITIA, SWORDSMEN, SPEARMEN, ARCHERS]
-    for _ in range(2 + difficulty):
-        army.add_squad(random.choice(base_units))
-    if difficulty >= 2:
-        army.add_squad(LIGHT_CAVALRY)
+
+    # Map team to race for roster lookup
+    _TEAM_TO_RACE = {
+        1: "human", 2: "high_elf", 3: "wood_elf", 4: "sea_elf",
+        5: "snow_elf", 6: "dark_elf", 7: "dwarf", 8: "orc",
+        9: "undead", 10: "troll_ogre", 11: "beastfolk",
+        12: "goblin", 13: "demon",
+    }
+    race_id = _TEAM_TO_RACE.get(team)
+    heroes = RACE_HEROES.get(race_id, GENERAL_ROSTER) if race_id else GENERAL_ROSTER
+    army.general_stats = random.choice(heroes)
+
+    roster = RACE_ROSTER.get(race_id) if race_id else None
+    if roster:
+        # Pick from racial roster
+        basic = roster[:max(3, len(roster) // 2)]  # first half = basic units
+        for _ in range(2 + difficulty):
+            army.add_squad(random.choice(basic))
+        if difficulty >= 2 and len(roster) > 3:
+            # Add an elite unit
+            army.add_squad(random.choice(roster[len(roster) // 2:]))
+    else:
+        # Fallback to legacy units
+        base_units = [MILITIA, SWORDSMEN, SPEARMEN, ARCHERS]
+        for _ in range(2 + difficulty):
+            army.add_squad(random.choice(base_units))
+        if difficulty >= 2:
+            army.add_squad(LIGHT_CAVALRY)
+
     return army
