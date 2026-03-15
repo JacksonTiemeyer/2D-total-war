@@ -461,6 +461,10 @@ class Squad:
         # Apply unit-specific exhaustion rate multiplier and veterancy
         rate *= self.unit_stats.exhaustion_rate * self.vet_exhaustion_mult
 
+        # D2: Season exhaustion multiplier (from terrain_mods)
+        season_mult = getattr(self, 'terrain_mods', {}).get('exhaustion_mult', 1.0) if hasattr(self, 'terrain_mods') and self.terrain_mods else 1.0
+        rate *= season_mult
+
         self.exhaustion = min(EXHAUSTION_MAX, self.exhaustion + rate)
 
         # Sync exhaustion to soldiers

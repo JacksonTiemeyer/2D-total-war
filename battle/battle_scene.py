@@ -20,6 +20,9 @@ from core.settings import (
     CAVALRY_PUNCHTHROUGH_MASS_RATIO, CAVALRY_PUNCHTHROUGH_PUSH,
     CAVALRY_PUNCHTHROUGH_MIN_DEPTH,
     MOVE_MODE_WALK, MOVE_MODE_MARCH, MOVE_MODE_RUN,
+    SEASON_SUMMER, SEASON_AUTUMN, SEASON_WINTER,
+    SEASON_SUMMER_EXHAUSTION_MULT, SEASON_AUTUMN_MUD_CHANCE,
+    SEASON_WINTER_RANGED_PENALTY, SEASON_WINTER_SNOW_CHANCE,
 )
 from core.camera import Camera
 from core.utils import distance, point_in_rect, angle_between
@@ -35,9 +38,13 @@ class BattleResult:
 
 
 class BattleScene:
-    def __init__(self, player_army, enemy_army):
+    def __init__(self, player_army, enemy_army, terrain_type=None, season=None):
         self.camera = Camera(BATTLE_MAP_WIDTH, BATTLE_MAP_HEIGHT)
         self.camera.center_on(BATTLE_MAP_WIDTH / 2, BATTLE_MAP_HEIGHT / 2)
+
+        # D1: Campaign terrain type and D2: season
+        self.terrain_type = terrain_type or "plains"
+        self.season = season
 
         self.player_squads = []
         self.enemy_squads = []
@@ -77,11 +84,16 @@ class BattleScene:
         self._ui_buttons = {}
         self._unit_card_rects = []
 
-        # Weather
-        self.weather = random.choice(WEATHER_TYPES)
+        # Weather - D2: Season affects weather selection
+        self.weather = self._choose_weather()
         self.wind_direction = random.uniform(-1, 1)  # -1 = left, +1 = right
         self.weather_particles = []
         self._init_weather_particles()
+
+        # D2: Season exhaustion modifier
+        self.season_exhaustion_mult = 1.0
+        if self.season == SEASON_SUMMER:
+            self.season_exhaustion_mult = SEASON_SUMMER_EXHAUSTION_MULT
 
         # Terrain features
         self.terrain = []
@@ -96,11 +108,80 @@ class BattleScene:
         for g in self.enemy_generals:
             g._all_enemy_generals = self.player_generals
 
+    def _choose_weather(self):
+        """D2: Choose weather based on season and terrain."""
+        if self.season == SEASON_AUTUMN and random.random() < SEASON_AUTUMN_MUD_CHANCE:
+            return "mud"
+        if self.season == SEASON_WINTER and random.random() < SEASON_WINTER_SNOW_CHANCE:
+            return random.choice(["fog", "rain"])
+        # Desert terrain tends to be clear
+        if self.terrain_type == "desert":
+            return random.choice(["clear", "clear", "clear", "wind"])
+        # Coastal terrain tends to be windy/rainy
+        if self.terrain_type == "coastal":
+            return random.choice(["clear", "wind", "rain"])
+        return random.choice(WEATHER_TYPES)
+
     def _generate_terrain(self):
-        self.terrain.append({"type": "hill", "rect": (800, 600, 400, 200), "color": (80, 140, 60)})
-        self.terrain.append({"type": "forest", "rect": (1800, 400, 300, 350), "color": (30, 90, 20)})
-        self.terrain.append({"type": "hill", "rect": (1200, 1200, 350, 180), "color": (80, 140, 60)})
-        self.terrain.append({"type": "forest", "rect": (500, 1100, 250, 300), "color": (30, 90, 20)})
+        """D1: Generate terrain based on terrain_type from campaign map."""
+        tt = self.terrain_type
+        W, H = BATTLE_MAP_WIDTH, BATTLE_MAP_HEIGHT
+
+        if tt == "forest":
+            # 5-7 forest patches, 1 hill
+            num_forests = random.randint(5, 7)
+            for _ in range(num_forests):
+                x = random.randint(200, W - 500)
+                y = random.randint(200, H - 400)
+                w = random.randint(200, 400)
+                h = random.randint(200, 400)
+                self.terrain.append({"type": "forest", "rect": (x, y, w, h), "color": (30, 90, 20)})
+            # One hill
+            hx = random.randint(400, W - 600)
+            hy = random.randint(400, H - 400)
+            self.terrain.append({"type": "hill", "rect": (hx, hy, 350, 200), "color": (80, 140, 60)})
+
+        elif tt == "mountain":
+            # 3-4 large hills (elevated terrain), narrow valleys
+            num_hills = random.randint(3, 4)
+            for i in range(num_hills):
+                x = random.randint(100, W - 600)
+                y = random.randint(100, H - 400)
+                w = random.randint(400, 600)
+                h = random.randint(250, 400)
+                self.terrain.append({"type": "hill", "rect": (x, y, w, h), "color": (120, 110, 80)})
+            # Add a forest patch in a valley
+            self.terrain.append({"type": "forest", "rect": (W // 2 - 150, H // 2 - 100, 300, 200), "color": (40, 80, 30)})
+
+        elif tt == "desert":
+            # Sand dunes (hills with desert color), open ground
+            num_dunes = random.randint(2, 4)
+            for _ in range(num_dunes):
+                x = random.randint(200, W - 500)
+                y = random.randint(200, H - 400)
+                w = random.randint(250, 450)
+                h = random.randint(150, 300)
+                self.terrain.append({"type": "hill", "rect": (x, y, w, h), "color": (190, 170, 120)})
+
+        elif tt == "coastal":
+            # Water on one side (impassable), narrow land strip
+            # Water takes up right third of map
+            water_x = W * 2 // 3
+            self.terrain.append({
+                "type": "water", "rect": (water_x, 0, W - water_x, H),
+                "color": (40, 80, 150)
+            })
+            # A hill on the land side
+            self.terrain.append({"type": "hill", "rect": (300, 600, 350, 200), "color": (80, 140, 60)})
+            # A forest patch
+            self.terrain.append({"type": "forest", "rect": (100, 1200, 250, 250), "color": (30, 90, 20)})
+
+        else:
+            # Plains (default) - few hills and forests
+            self.terrain.append({"type": "hill", "rect": (800, 600, 400, 200), "color": (80, 140, 60)})
+            self.terrain.append({"type": "forest", "rect": (1800, 400, 300, 350), "color": (30, 90, 20)})
+            self.terrain.append({"type": "hill", "rect": (1200, 1200, 350, 180), "color": (80, 140, 60)})
+            self.terrain.append({"type": "forest", "rect": (500, 1100, 250, 300), "color": (30, 90, 20)})
 
     def get_terrain_at(self, x, y):
         """Return terrain type at given world position, or None."""
@@ -109,6 +190,10 @@ class BattleScene:
             if rx <= x <= rx + rw and ry <= y <= ry + rh:
                 return t["type"]
         return None
+
+    def is_water_at(self, x, y):
+        """D1: Check if position is in water (impassable for coastal maps)."""
+        return self.get_terrain_at(x, y) == "water"
 
     def get_terrain_modifiers(self, squad):
         """Compute terrain modifiers for a squad based on its position."""
@@ -131,6 +216,13 @@ class BattleScene:
                 mods["speed_mult"] = FOREST_CAVALRY_SPEED_MULT
             mods["ranged_accuracy_mult"] = FOREST_RANGED_ACCURACY_MULT
             mods["melee_defense_mult"] = FOREST_MELEE_DEFENSE_BONUS
+        elif terrain_type == "water":
+            # Water is impassable - extreme speed penalty to push units back
+            mods["speed_mult"] = 0.1
+
+        # D2: Season modifiers
+        if self.season == SEASON_WINTER:
+            mods["ranged_accuracy_mult"] *= SEASON_WINTER_RANGED_PENALTY
 
         # Apply weather modifiers
         wmods = self.get_weather_modifiers()
@@ -869,8 +961,23 @@ class BattleScene:
                        if sq.state == SquadState.ROUTED}
 
         for sq in self.all_squads:
-            sq.terrain_mods = self.get_terrain_modifiers(sq)
+            mods = self.get_terrain_modifiers(sq)
+            # D2: Season exhaustion multiplier
+            mods["exhaustion_mult"] = self.season_exhaustion_mult
+            sq.terrain_mods = mods
             sq.update(self.all_squads)
+
+        # D1: Push soldiers out of water (coastal maps)
+        if self.terrain_type == "coastal":
+            for sq in self.all_squads:
+                for s in sq.soldiers:
+                    if s.alive and self.is_water_at(s.x, s.y):
+                        # Push back to land edge
+                        for t in self.terrain:
+                            if t["type"] == "water":
+                                rx, ry, rw, rh = t["rect"]
+                                if rx <= s.x <= rx + rw and ry <= s.y <= ry + rh:
+                                    s.x = rx - 5  # push to left edge of water
 
         # Resolve soldier-soldier collisions
         self._resolve_collisions()
@@ -1165,17 +1272,41 @@ class BattleScene:
                     return
 
     def draw(self, surface):
-        surface.fill((90, 140, 60))
+        # D1: Terrain-specific background colors
+        bg_colors = {
+            "plains": (90, 140, 60),
+            "forest": (60, 110, 45),
+            "mountain": (110, 105, 80),
+            "desert": (195, 175, 130),
+            "coastal": (90, 140, 60),
+        }
+        grid_colors = {
+            "plains": (80, 130, 55),
+            "forest": (50, 100, 40),
+            "mountain": (100, 95, 72),
+            "desert": (180, 160, 120),
+            "coastal": (80, 130, 55),
+        }
+        # D2: Season tinting
+        bg = bg_colors.get(self.terrain_type, (90, 140, 60))
+        if self.season == SEASON_WINTER:
+            # Whiten the background slightly for snow
+            bg = (min(255, bg[0] + 40), min(255, bg[1] + 40), min(255, bg[2] + 50))
+        elif self.season == SEASON_AUTUMN:
+            # Warmer/browner tones
+            bg = (min(255, bg[0] + 20), bg[1], max(0, bg[2] - 10))
+        surface.fill(bg)
 
+        grid_color = grid_colors.get(self.terrain_type, (80, 130, 55))
         grid_size = 100
         for x in range(0, BATTLE_MAP_WIDTH, grid_size):
             start = self.camera.world_to_screen(x, 0)
             end = self.camera.world_to_screen(x, BATTLE_MAP_HEIGHT)
-            pygame.draw.line(surface, (80, 130, 55), start, end, 1)
+            pygame.draw.line(surface, grid_color, start, end, 1)
         for y in range(0, BATTLE_MAP_HEIGHT, grid_size):
             start = self.camera.world_to_screen(0, y)
             end = self.camera.world_to_screen(BATTLE_MAP_WIDTH, y)
-            pygame.draw.line(surface, (80, 130, 55), start, end, 1)
+            pygame.draw.line(surface, grid_color, start, end, 1)
 
         for t in self.terrain:
             rx, ry, rw, rh = t["rect"]
@@ -1183,6 +1314,12 @@ class BattleScene:
             w = self.camera.scale(rw)
             h = self.camera.scale(rh)
             pygame.draw.rect(surface, t["color"], (*screen_pos, w, h))
+            # D1: Water gets wave lines
+            if t["type"] == "water" and self.camera.zoom > 0.3:
+                for wy in range(int(screen_pos[1]), int(screen_pos[1] + h), max(1, int(self.camera.scale(40)))):
+                    pygame.draw.line(surface, (60, 100, 170),
+                                     (int(screen_pos[0]), wy),
+                                     (int(screen_pos[0] + w), wy), 1)
             if self.camera.zoom > 0.4:
                 font = pygame.font.SysFont(None, 16)
                 text = font.render(t["type"].title(), True, (200, 200, 200))

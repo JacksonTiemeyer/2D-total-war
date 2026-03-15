@@ -19,6 +19,7 @@ from core.settings import (
     ARMY_SIZE_BASE, ARMY_SIZE_PER_LEVEL, ARMY_SIZE_MAX,
     REST_COST_PER_DAY, REST_REPLENISH_RATE,
     MERCENARY_COST_MULTIPLIER, TAVERN_MERCS_COUNT, TAVERN_RUMORS_COUNT,
+    TOURNAMENT_ENTRY_FEE,
 )
 from core.utils import point_in_rect
 from data.unit_types import ALL_RECRUITABLE, FACTION_SPECIALTY_UNITS
@@ -88,7 +89,8 @@ class SettlementInteraction:
                   "quests": "Quests"}
 
     def __init__(self, settlement, player_army, diplomacy, factions, day,
-                 all_settlements=None, all_armies=None, quest_manager=None):
+                 all_settlements=None, all_armies=None, quest_manager=None,
+                 tournament_available=False):
         self.settlement = settlement
         self.army = player_army
         self.diplomacy = diplomacy
@@ -97,6 +99,7 @@ class SettlementInteraction:
         self.all_settlements = all_settlements or []
         self.all_armies = all_armies or []
         self.quest_manager = quest_manager  # B3: quest manager reference
+        self.tournament_available = tournament_available  # D5: tournament
 
         # Determine available tabs
         self._available_tabs = self._compute_available_tabs()
@@ -235,6 +238,14 @@ class SettlementInteraction:
             key = f"merc_{i}"
             if key in self._button_rects and point_in_rect(mx, my, *self._button_rects[key]):
                 return self._hire_mercenary(i)
+
+        # D5: Tournament entry
+        key = "tournament_enter"
+        if key in self._button_rects and point_in_rect(mx, my, *self._button_rects[key]):
+            if self.tournament_available and self.army.gold >= TOURNAMENT_ENTRY_FEE:
+                return {"action": "enter_tournament"}
+            elif self.army.gold < TOURNAMENT_ENTRY_FEE:
+                self._flash("Not enough gold for entry fee.")
 
         # Dismiss rumor buttons
         for i in range(len(self.rumors)):
@@ -539,6 +550,35 @@ class SettlementInteraction:
                 surface.blit(desc_t, (cx + 18, y + 36))
 
                 y += btn_h + 5
+
+        # D5: Tournament section
+        if self.tournament_available:
+            y += 10
+            pygame.draw.line(surface, _SEPARATOR, (cx + 10, y), (cx + cw - 10, y))
+            y += 10
+            tourney_header = self._font.render("Tournament!", True, GOLD)
+            surface.blit(tourney_header, (cx + 5, y))
+            y += 25
+
+            can_afford = self.army.gold >= TOURNAMENT_ENTRY_FEE
+            btn_h = 36
+            key = "tournament_enter"
+            rect = (cx + 10, y, cw - 20, btn_h)
+            hovered = point_in_rect(mx, my, *rect)
+            col = (_BTN_HOVER if hovered else _BTN) if can_afford else _BTN_DISABLED
+            pygame.draw.rect(surface, col, rect)
+            pygame.draw.rect(surface, GOLD if can_afford else GREY, rect, 1)
+            self._button_rects[key] = rect
+
+            entry_text = f"Enter Tournament (Entry Fee: {TOURNAMENT_ENTRY_FEE}g)"
+            et = self._font.render(entry_text, True, WHITE if can_afford else _TEXT_DIM)
+            surface.blit(et, (cx + 18, y + 8))
+            y += btn_h + 5
+
+            desc = self._font_small.render(
+                "Fight 3 rounds for gold and glory!", True, _TEXT_DIM)
+            surface.blit(desc, (cx + 18, y))
+            y += 20
 
         # Separator
         y += 10

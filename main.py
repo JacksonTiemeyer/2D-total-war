@@ -56,6 +56,7 @@ class Game:
         self.skirmish_setup = None # skirmish army builder
         self.is_skirmish = False   # true when battle launched from skirmish mode
         self.is_siege = False      # true when battle is a siege
+        self.battle_terrain_type = None  # D1: terrain from campaign map
 
     def run(self):
         while self.running:
@@ -112,12 +113,17 @@ class Game:
                 player_data = self.campaign.player_army.get_battle_data()
                 enemy_data = self.current_enemy.get_battle_data()
                 self.is_siege = self._check_siege()
+                # D1: Get terrain type, D2: Get season for weather bias
+                terrain_type = getattr(self, 'battle_terrain_type', None)
+                season = self.campaign._get_current_season() if self.campaign else None
                 if self.is_siege:
                     from battle.siege_scene import SiegeScene
                     self.battle = SiegeScene(player_data, enemy_data,
                                             player_is_attacker=True)
                 else:
-                    self.battle = BattleScene(player_data, enemy_data)
+                    self.battle = BattleScene(player_data, enemy_data,
+                                              terrain_type=terrain_type,
+                                              season=season)
                 # D6: Apply intimidation bonus from executions
                 if self.campaign:
                     intim = self.campaign.general_manager.consume_intimidation_bonus()
@@ -165,6 +171,8 @@ class Game:
             battle = self.campaign.get_pending_battle()
             if battle:
                 self.current_enemy = battle[1]
+                # D1: Store terrain type from campaign position
+                self.battle_terrain_type = battle[2] if len(battle) > 2 else None
                 self.state = GameState.PRE_BATTLE
         elif self.state == GameState.BATTLE:
             self.battle.update()
@@ -422,9 +430,26 @@ class Game:
         title = font.render(title_text, True, GOLD)
         self.screen.blit(title, (SCREEN_WIDTH // 2 - title.get_width() // 2, 60))
 
+        # D1: Show terrain type and D2: season
+        terrain_type = getattr(self, 'battle_terrain_type', None) or "plains"
+        terrain_colors = {
+            "plains": (150, 200, 100), "forest": (60, 140, 60),
+            "mountain": (160, 150, 130), "desert": (210, 190, 140),
+            "coastal": (100, 150, 220),
+        }
+        terrain_label = tiny.render(
+            f"Terrain: {terrain_type.capitalize()}", True,
+            terrain_colors.get(terrain_type, WHITE))
+        self.screen.blit(terrain_label, (SCREEN_WIDTH // 2 - terrain_label.get_width() // 2, 95))
+
+        if self.campaign:
+            season = self.campaign._get_current_season()
+            season_label = tiny.render(f"Season: {season.capitalize()}", True, (180, 180, 180))
+            self.screen.blit(season_label, (SCREEN_WIDTH // 2 - season_label.get_width() // 2, 112))
+
         # Player army info
         pa = self.campaign.player_army
-        y = 130
+        y = 135
         header = small.render("Your Forces:", True, (100, 150, 255))
         self.screen.blit(header, (100, y))
         y += 25

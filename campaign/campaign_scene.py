@@ -433,7 +433,8 @@ class CampaignScene:
                 self.settlement_interaction = SettlementInteraction(
                     s, self.player_army, self.diplomacy, self.factions,
                     self.day, self.settlements, self.armies,
-                    quest_manager=self.quest_manager)
+                    quest_manager=self.quest_manager,
+                    tournament_available=self._is_tournament_available(s))
                 self.paused = True
                 self._add_notification(f"Entered {s.name}")
                 return
@@ -453,6 +454,12 @@ class CampaignScene:
             # Update the settlement_interaction's day reference
             if self.settlement_interaction:
                 self.settlement_interaction.day = self.day
+        elif act == "enter_tournament":
+            # D5: Player wants to enter tournament
+            if self.player_army.gold >= TOURNAMENT_ENTRY_FEE:
+                self._start_tournament()
+            else:
+                self._add_notification("Not enough gold for tournament entry fee.")
 
     def _try_open_recruitment(self):
         # B9: If near a settlement, open settlement interaction instead
@@ -464,7 +471,8 @@ class CampaignScene:
                 self.settlement_interaction = SettlementInteraction(
                     s, self.player_army, self.diplomacy, self.factions,
                     self.day, self.settlements, self.armies,
-                    quest_manager=self.quest_manager)
+                    quest_manager=self.quest_manager,
+                    tournament_available=self._is_tournament_available(s))
                 self.settlement_interaction.current_tab = "recruit"
                 self.paused = True
                 return
