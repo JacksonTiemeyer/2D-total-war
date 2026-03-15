@@ -28,17 +28,22 @@ DARK_RED = (140, 30, 30)
 PURPLE = (140, 50, 180)
 GOLD = (255, 215, 0)
 
-# Team colors
+# Team colors — Phase 3: 13 racial factions
 TEAM_COLORS = {
     0: BLUE,                 # Player / Independent
-    1: RED,                  # Iron Empire
-    2: (40, 160, 40),        # Forest Alliance
-    3: (200, 140, 40),       # Desert Raiders
-    4: (60, 160, 160),       # Northern Holds - teal
-    5: (140, 60, 180),       # Maritime Republic - purple
-    6: (140, 100, 50),       # Steppe Horde - brown
-    7: (200, 180, 60),       # Holy Order - gold
-    8: (140, 140, 140),      # Free Cities - grey
+    1: RED,                  # Human Kingdoms
+    2: (180, 180, 220),      # High Elf Dominion - silver
+    3: (40, 140, 40),        # Wood Elf Enclave - forest green
+    4: (60, 160, 160),       # Sea Elf Corsairs - teal
+    5: (140, 180, 220),      # Snow Elf Khanate - ice blue
+    6: (100, 40, 120),       # Dark Elf Cabal - dark purple
+    7: (180, 140, 60),       # Dwarf Holds - bronze
+    8: (80, 140, 40),        # Orc Waaagh! - orc green
+    9: (120, 110, 90),       # Undead Legion - bone
+    10: (140, 100, 60),      # Troll & Ogre Tribes - mud brown
+    11: (140, 40, 40),       # Beastfolk Warherds - dark red
+    12: (80, 120, 40),       # Feral Goblins - goblin green
+    13: (180, 40, 20),       # Demon Horde - hellfire
     90: (120, 60, 60),       # Bandits
     91: (80, 40, 100),       # Cultists
     92: (100, 70, 50),       # Cannibals
@@ -48,14 +53,19 @@ TEAM_COLORS = {
 }
 TEAM_COLORS_LIGHT = {
     0: LIGHT_BLUE,
-    1: (220, 100, 100),
-    2: (120, 220, 120),
-    3: (240, 200, 100),
-    4: (140, 220, 220),
-    5: (200, 140, 240),
-    6: (200, 160, 100),
-    7: (255, 240, 120),
-    8: (200, 200, 200),
+    1: (220, 100, 100),      # Human
+    2: (210, 210, 240),      # High Elf
+    3: (100, 200, 100),      # Wood Elf
+    4: (120, 200, 200),      # Sea Elf
+    5: (180, 210, 240),      # Snow Elf
+    6: (160, 80, 180),       # Dark Elf
+    7: (220, 180, 100),      # Dwarf
+    8: (120, 180, 80),       # Orc
+    9: (170, 160, 140),      # Undead
+    10: (190, 150, 100),     # Troll/Ogre
+    11: (190, 90, 90),       # Beastfolk
+    12: (120, 160, 80),      # Goblin
+    13: (220, 80, 60),       # Demon
     90: (180, 100, 100),
     91: (140, 80, 160),
     92: (160, 120, 90),
@@ -68,9 +78,9 @@ TEAM_COLORS_LIGHT = {
 BATTLE_MAP_WIDTH = 3000
 BATTLE_MAP_HEIGHT = 2000
 
-# Campaign map
-CAMPAIGN_MAP_WIDTH = 4000
-CAMPAIGN_MAP_HEIGHT = 3000
+# Campaign map (Phase 3: expanded for fantasy world)
+CAMPAIGN_MAP_WIDTH = 6000
+CAMPAIGN_MAP_HEIGHT = 4500
 
 # Real-time campaign
 CAMPAIGN_TICKS_PER_DAY = 300         # frames per in-game day at 1x speed

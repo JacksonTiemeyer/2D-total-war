@@ -126,23 +126,39 @@ class CampaignScene:
         self.prisoner_action_msg = None   # feedback message for prisoner actions
         self.prisoner_action_timer = 0
 
-        # D1: Terrain zones (queryable from decorative terrain data)
+        # D1: Terrain zones — expanded for 6000x4500 map
         self._terrain_forests = [
-            (200, 400, 120), (1000, 200, 80), (700, 800, 100),
-            (1500, 900, 90), (1900, 300, 70), (1100, 700, 110),
-            (900, 900, 85), (600, 1400, 95), (2800, 1500, 80),
-            (3300, 400, 75), (1700, 2200, 90),
+            # Northwest - Wood Elf territory
+            (400, 600, 180), (700, 400, 150), (500, 900, 140),
+            (900, 700, 120), (300, 1100, 100), (1100, 500, 110),
+            (600, 1300, 90), (800, 1100, 130),
+            # Central scattered
+            (2200, 1800, 100), (2800, 2200, 80), (1800, 2500, 90),
+            # Eastern
+            (4200, 1200, 100), (4500, 800, 80),
         ]
         self._terrain_mountains = [
-            (1100, 150, 60), (1800, 600, 50), (300, 900, 45),
-            (1600, 100, 55), (3000, 400, 50), (2500, 1400, 45),
-            (500, 1800, 40),
+            # Northeast - Dwarf territory
+            (4200, 400, 120), (4500, 600, 100), (4800, 300, 90),
+            (4000, 200, 80), (4600, 500, 110), (4300, 800, 70),
+            # Central ridge
+            (2800, 1000, 60), (3000, 600, 50),
+            # Wild Mountains - Troll/Ogre
+            (3500, 2800, 100), (3800, 3000, 90), (3200, 3200, 80),
+            # Far North peaks
+            (2000, 200, 70), (2500, 150, 60),
         ]
         self._terrain_deserts = [
-            (2800, 1900, 200), (3200, 1700, 150), (3000, 2100, 120),
+            # Southeast - Orc Wastes
+            (4500, 3200, 250), (5000, 3500, 200), (4800, 3800, 180),
+            (4200, 3600, 150), (5200, 3000, 120),
         ]
         self._terrain_water = [
-            (1200, 2700, 250), (800, 2500, 150), (1600, 2700, 180),
+            # Southwest coast - Sea Elf
+            (400, 3500, 300), (800, 3800, 250), (200, 4000, 200),
+            (1200, 4000, 200), (600, 4200, 180),
+            # Central lake
+            (2800, 2800, 150),
         ]
 
         # D5: Tournament state
@@ -160,120 +176,179 @@ class CampaignScene:
         self.notifications.append((text, self.NOTIFICATION_DURATION))
 
     def _generate_world(self):
-        """Generate campaign map with 35 settlements across 8 factions."""
-        # B4: Expanded settlement data - 35 settlements
+        """Generate campaign map with 70+ settlements across 13 racial factions."""
+        # Phase 3: 70+ settlements on 6000x4500 map
         settlement_data = [
-            # B2: Western settlements - neutral/unclaimed (player starts with nothing)
-            ("Ironhold", 350, 400, SettlementType.CASTLE, None),
-            ("Millbrook", 500, 250, SettlementType.VILLAGE, None),
-            ("King's Landing", 550, 600, SettlementType.TOWN, None),
-            ("Brightwater", 300, 700, SettlementType.VILLAGE, None),
+            # ── Neutral/Unclaimed (contested border regions) ──
+            ("Crossroads Inn", 2800, 1800, SettlementType.VILLAGE, None),
+            ("Trader's Rest", 2400, 2200, SettlementType.VILLAGE, None),
+            ("Ruined Outpost", 3200, 1400, SettlementType.VILLAGE, None),
+            ("Borderwatch", 2000, 1200, SettlementType.VILLAGE, None),
+            ("Pilgrim's Ford", 1800, 2800, SettlementType.VILLAGE, None),
 
-            # Iron Empire (team 1) - 5 settlements, east-central
-            ("Thornkeep", 2200, 700, SettlementType.CASTLE, 1),
-            ("Ashvale", 2400, 500, SettlementType.VILLAGE, 1),
-            ("Blackspire", 2600, 800, SettlementType.TOWN, 1),
-            ("Dragonrest", 2500, 1100, SettlementType.CASTLE, 1),
-            ("Iron Bastion", 2300, 350, SettlementType.TOWN, 1),
+            # ── Human Kingdoms (team 1) — Central Plains ──  12 settlements
+            ("King's Landing", 2600, 1600, SettlementType.CASTLE, 1),
+            ("Ironhold", 2400, 1400, SettlementType.CASTLE, 1),
+            ("Goldenhall", 2800, 1200, SettlementType.CASTLE, 1),
+            ("Millbrook", 2200, 1600, SettlementType.TOWN, 1),
+            ("Ashvale", 2600, 1200, SettlementType.TOWN, 1),
+            ("Brightwater", 3000, 1600, SettlementType.TOWN, 1),
+            ("Thornfield", 2400, 1800, SettlementType.TOWN, 1),
+            ("Haywick", 2200, 1200, SettlementType.VILLAGE, 1),
+            ("Oxbridge", 2800, 1400, SettlementType.VILLAGE, 1),
+            ("Millhaven", 2600, 2000, SettlementType.VILLAGE, 1),
+            ("Barley Cross", 3000, 1800, SettlementType.VILLAGE, 1),
+            ("Shepherd's Gate", 2000, 1600, SettlementType.VILLAGE, 1),
 
-            # Forest Alliance (team 2) - 4 settlements, central forests
-            ("Greenfield", 1100, 800, SettlementType.TOWN, 2),
-            ("Willowmere", 900, 1000, SettlementType.VILLAGE, 2),
-            ("Stormwatch", 1300, 1000, SettlementType.CASTLE, 2),
-            ("Mosshollow", 1000, 600, SettlementType.VILLAGE, 2),
+            # ── High Elf Dominion (team 2) — Eastern Highlands ──  7 settlements
+            ("Arcane Spire", 4800, 1400, SettlementType.CASTLE, 2),
+            ("Crystal Citadel", 5000, 1200, SettlementType.CASTLE, 2),
+            ("Starfall", 4600, 1200, SettlementType.TOWN, 2),
+            ("Moonhaven", 5200, 1400, SettlementType.TOWN, 2),
+            ("Silver Grove", 4400, 1400, SettlementType.VILLAGE, 2),
+            ("Aetherium", 5000, 1000, SettlementType.VILLAGE, 2),
+            ("Luminara", 4600, 1600, SettlementType.VILLAGE, 2),
 
-            # Desert Raiders (team 3) - 4 settlements, southeast
-            ("Dusthaven", 2800, 1800, SettlementType.TOWN, 3),
-            ("Shadowfen", 3000, 2000, SettlementType.VILLAGE, 3),
-            ("Sandspire", 3200, 1600, SettlementType.CASTLE, 3),
-            ("Oasis Hold", 2600, 2000, SettlementType.VILLAGE, 3),
+            # ── Wood Elf Enclave (team 3) — Northwest Forests ──  6 settlements
+            ("Deepwood Hold", 600, 700, SettlementType.CASTLE, 3),
+            ("Oakenheart", 400, 1000, SettlementType.TOWN, 3),
+            ("Greenfield", 800, 500, SettlementType.TOWN, 3),
+            ("Willowmere", 600, 1200, SettlementType.VILLAGE, 3),
+            ("Mosshollow", 900, 800, SettlementType.VILLAGE, 3),
+            ("Fernvale", 300, 600, SettlementType.VILLAGE, 3),
 
-            # Northern Holds (team 4) - 4 settlements, north
-            ("Frosthaven", 1600, 200, SettlementType.CASTLE, 4),
-            ("Icewatch", 1800, 350, SettlementType.TOWN, 4),
-            ("Snowpeak", 1400, 350, SettlementType.VILLAGE, 4),
-            ("Winterhold", 2000, 200, SettlementType.VILLAGE, 4),
+            # ── Sea Elf Corsairs (team 4) — Southwest Coast ──  6 settlements
+            ("Tidecrest", 600, 3600, SettlementType.CASTLE, 4),
+            ("Portmere", 400, 3200, SettlementType.TOWN, 4),
+            ("Coral Haven", 800, 4000, SettlementType.TOWN, 4),
+            ("Storm Harbor", 1000, 3800, SettlementType.TOWN, 4),
+            ("Saltmere", 200, 3800, SettlementType.VILLAGE, 4),
+            ("Shell Cove", 600, 4200, SettlementType.VILLAGE, 4),
 
-            # Maritime Republic (team 5) - 4 settlements, south coast
-            ("Portmere", 1200, 2400, SettlementType.TOWN, 5),
-            ("Tidecrest", 1500, 2600, SettlementType.CASTLE, 5),
-            ("Saltmoor", 900, 2200, SettlementType.VILLAGE, 5),
-            ("Harbor Gate", 1700, 2400, SettlementType.TOWN, 5),
+            # ── Snow Elf Khanate (team 5) — Far North Tundra ──  6 settlements
+            ("Frosthaven", 2200, 300, SettlementType.CASTLE, 5),
+            ("Winterhold", 1800, 200, SettlementType.CASTLE, 5),
+            ("Icewatch", 2600, 400, SettlementType.TOWN, 5),
+            ("Snowpeak", 2000, 500, SettlementType.VILLAGE, 5),
+            ("Glacial Shrine", 2400, 200, SettlementType.VILLAGE, 5),
+            ("Tundra Camp", 1600, 400, SettlementType.VILLAGE, 5),
 
-            # Steppe Horde (team 6) - 4 settlements, far east
-            ("Khan's Camp", 3400, 800, SettlementType.CASTLE, 6),
-            ("Windrun", 3200, 600, SettlementType.VILLAGE, 6),
-            ("Hoofmark", 3500, 1100, SettlementType.TOWN, 6),
-            ("Eagle's Nest", 3600, 500, SettlementType.VILLAGE, 6),
+            # ── Dark Elf Cabal (team 6) — Underground/South ──  6 settlements
+            ("Naggarond", 1400, 3800, SettlementType.CASTLE, 6),
+            ("Shadow Gate", 1600, 4000, SettlementType.CASTLE, 6),
+            ("Darkhaven", 1200, 3600, SettlementType.TOWN, 6),
+            ("Venom Pit", 1800, 3800, SettlementType.TOWN, 6),
+            ("Slave Market", 1400, 4200, SettlementType.VILLAGE, 6),
+            ("Web Cavern", 1000, 4000, SettlementType.VILLAGE, 6),
 
-            # Holy Order (team 7) - 3 settlements, central-south
-            ("Temple Mount", 1800, 1600, SettlementType.CASTLE, 7),
-            ("Pilgrim's Rest", 2000, 1800, SettlementType.TOWN, 7),
-            ("Shrine of Dawn", 1600, 1800, SettlementType.VILLAGE, 7),
+            # ── Dwarf Holds (team 7) — Northeast Mountains ──  7 settlements
+            ("Karaz-a-Karak", 4400, 400, SettlementType.CASTLE, 7),
+            ("Iron Peak", 4600, 600, SettlementType.CASTLE, 7),
+            ("Barak Varr", 4200, 600, SettlementType.CASTLE, 7),
+            ("Hammer's Fall", 4800, 400, SettlementType.TOWN, 7),
+            ("Anvil Deep", 4400, 800, SettlementType.TOWN, 7),
+            ("Gold Mine", 4000, 400, SettlementType.VILLAGE, 7),
+            ("Grudge Keep", 4600, 200, SettlementType.VILLAGE, 7),
 
-            # Free Cities (team 8) - 3 settlements, scattered
-            ("Tradegate", 800, 1600, SettlementType.TOWN, 8),
-            ("Coinmarket", 1400, 1400, SettlementType.TOWN, 8),
-            ("Freeport", 600, 1200, SettlementType.VILLAGE, 8),
+            # ── Orc Waaagh! (team 8) — Southeast Wastes ──  7 settlements
+            ("Skullcrush Fort", 4800, 3400, SettlementType.CASTLE, 8),
+            ("Red Toof Camp", 5000, 3600, SettlementType.TOWN, 8),
+            ("Gork's Pit", 4600, 3600, SettlementType.TOWN, 8),
+            ("Waaagh Camp", 5200, 3200, SettlementType.VILLAGE, 8),
+            ("Bone Pile", 4400, 3800, SettlementType.VILLAGE, 8),
+            ("Mushroom Cave", 5000, 3200, SettlementType.VILLAGE, 8),
+            ("Rusty Spear", 4800, 4000, SettlementType.VILLAGE, 8),
+
+            # ── Undead Legion (team 9) — Cursed Lands (scattered) ──  6 settlements
+            ("Drakenhof", 3400, 2600, SettlementType.CASTLE, 9),
+            ("Bone Citadel", 3200, 3000, SettlementType.CASTLE, 9),
+            ("Corpse Garden", 3600, 2800, SettlementType.TOWN, 9),
+            ("Wight Barrow", 3000, 2800, SettlementType.VILLAGE, 9),
+            ("Plague Moor", 3400, 3200, SettlementType.VILLAGE, 9),
+            ("Tomb of Kings", 3800, 2600, SettlementType.VILLAGE, 9),
+
+            # ── Troll & Ogre Tribes (team 10) — Wild Mountains ──  4 settlements
+            ("Gianthold", 3600, 3000, SettlementType.CASTLE, 10),
+            ("Ogre Camp", 3400, 3400, SettlementType.TOWN, 10),
+            ("Troll Den", 3800, 3200, SettlementType.VILLAGE, 10),
+            ("Stone Circle", 3200, 3600, SettlementType.VILLAGE, 10),
+
+            # ── Beastfolk Warherds (team 11) — Southern Steppes ──  3 settlements
+            ("Herdstone", 2200, 3600, SettlementType.TOWN, 11),
+            ("Beast Hollow", 2400, 3800, SettlementType.VILLAGE, 11),
+            ("Bloodground", 2000, 3400, SettlementType.VILLAGE, 11),
         ]
         for name, x, y, stype, owner in settlement_data:
             self.settlements.append(Settlement(name, x, y, owner, stype))
 
-        # B4: Armies for all factions (3-5 per faction)
-        # Iron Empire armies (team 1)
-        for name, x, y in [("Lord Varro's Host", 2100, 600),
-                            ("The Iron Band", 2400, 400),
-                            ("Baron Thorne's Guard", 2600, 700),
-                            ("Imperial Vanguard", 2300, 1000)]:
-            army = create_enemy_army(name, 1, x, y, random.randint(2, 3))
-            self.armies.append(army)
+        # ── Racial Armies (3-5 per faction) ──
 
-        # Forest Alliance armies (team 2)
-        for name, x, y in [("Ser Aldric's Company", 1000, 750),
-                            ("The Green Wardens", 1200, 950),
-                            ("Deepwood Rangers", 900, 850)]:
-            army = create_enemy_army(name, 2, x, y, random.randint(1, 2))
-            self.armies.append(army)
+        # Human Kingdoms (team 1)
+        for name, x, y in [("King's Guard", 2500, 1500),
+                            ("Lord Varro's Host", 2700, 1300),
+                            ("Baron Thorne's Guard", 2300, 1700),
+                            ("Imperial Vanguard", 2900, 1500)]:
+            self.armies.append(create_enemy_army(name, 1, x, y, random.randint(2, 3)))
 
-        # Desert Raiders armies (team 3)
-        for name, x, y in [("The Red Wolves", 2900, 1900),
-                            ("Sand Vipers", 3100, 1700),
-                            ("Dune Stalkers", 2700, 1850)]:
-            army = create_enemy_army(name, 3, x, y, random.randint(1, 3))
-            self.armies.append(army)
+        # High Elf Dominion (team 2)
+        for name, x, y in [("Phoenix Guard", 4700, 1300),
+                            ("Silver Host", 5100, 1300),
+                            ("Arcane Wardens", 4500, 1500)]:
+            self.armies.append(create_enemy_army(name, 2, x, y, random.randint(2, 3)))
 
-        # Northern Holds armies (team 4)
-        for name, x, y in [("Jarl Bjorn's Hird", 1600, 300),
-                            ("The Frost Guard", 1900, 250),
-                            ("Mountain Watch", 1500, 200)]:
-            army = create_enemy_army(name, 4, x, y, random.randint(1, 2))
-            self.armies.append(army)
+        # Wood Elf Enclave (team 3)
+        for name, x, y in [("Glade Wardens", 700, 600),
+                            ("Shadow Patrol", 500, 900),
+                            ("Forest Sentinels", 800, 1100)]:
+            self.armies.append(create_enemy_army(name, 3, x, y, random.randint(1, 2)))
 
-        # Maritime Republic armies (team 5)
-        for name, x, y in [("Admiral's Fleet", 1300, 2500),
-                            ("Corsair Patrol", 1100, 2300),
-                            ("Harbor Guard", 1600, 2500)]:
-            army = create_enemy_army(name, 5, x, y, random.randint(1, 2))
-            self.armies.append(army)
+        # Sea Elf Corsairs (team 4)
+        for name, x, y in [("Corsair Fleet", 500, 3500),
+                            ("Tide Warriors", 700, 3900),
+                            ("Storm Raiders", 900, 3700)]:
+            self.armies.append(create_enemy_army(name, 4, x, y, random.randint(1, 2)))
 
-        # Steppe Horde armies (team 6)
-        for name, x, y in [("Khan's Riders", 3300, 700),
-                            ("Wind Wolves", 3400, 1000),
-                            ("Storm Lancers", 3500, 600)]:
-            army = create_enemy_army(name, 6, x, y, random.randint(2, 3))
-            self.armies.append(army)
+        # Snow Elf Khanate (team 5)
+        for name, x, y in [("Frost Guard", 2100, 400),
+                            ("Ice Riders", 2500, 300),
+                            ("Tundra Patrol", 1900, 300)]:
+            self.armies.append(create_enemy_army(name, 5, x, y, random.randint(1, 2)))
 
-        # Holy Order armies (team 7)
-        for name, x, y in [("Templar Guard", 1800, 1700),
-                            ("Crusader Host", 1900, 1500)]:
-            army = create_enemy_army(name, 7, x, y, random.randint(1, 2))
-            self.armies.append(army)
+        # Dark Elf Cabal (team 6)
+        for name, x, y in [("Shadow Host", 1300, 3700),
+                            ("Witch King's Guard", 1500, 3900),
+                            ("Dark Raiders", 1700, 3700)]:
+            self.armies.append(create_enemy_army(name, 6, x, y, random.randint(2, 3)))
 
-        # Free Cities armies (team 8)
-        for name, x, y in [("Mercenary Company", 800, 1500),
-                            ("Trade Guard", 1400, 1300)]:
-            army = create_enemy_army(name, 8, x, y, random.randint(1, 2))
-            self.armies.append(army)
+        # Dwarf Holds (team 7)
+        for name, x, y in [("Ironbreaker Regiment", 4300, 500),
+                            ("Thunderer Brigade", 4500, 700),
+                            ("Slayer Expedition", 4700, 500),
+                            ("Engineer Corps", 4100, 500)]:
+            self.armies.append(create_enemy_army(name, 7, x, y, random.randint(1, 2)))
+
+        # Orc Waaagh! (team 8)
+        for name, x, y in [("Grimgor's Boyz", 4700, 3500),
+                            ("Da Red Toof", 5100, 3500),
+                            ("Skull Smashers", 4500, 3700),
+                            ("Wolf Rider Pack", 4900, 3300)]:
+            self.armies.append(create_enemy_army(name, 8, x, y, random.randint(2, 3)))
+
+        # Undead Legion (team 9)
+        for name, x, y in [("Skeleton Horde", 3300, 2700),
+                            ("Grave March", 3500, 2900),
+                            ("Wight Host", 3100, 2900)]:
+            self.armies.append(create_enemy_army(name, 9, x, y, random.randint(2, 3)))
+
+        # Troll & Ogre Tribes (team 10)
+        for name, x, y in [("Ogre Warband", 3500, 3100),
+                            ("Troll Horde", 3700, 3300)]:
+            self.armies.append(create_enemy_army(name, 10, x, y, random.randint(1, 2)))
+
+        # Beastfolk Warherds (team 11)
+        for name, x, y in [("Minotaur Warband", 2300, 3700),
+                            ("Beastherd", 2100, 3500)]:
+            self.armies.append(create_enemy_army(name, 11, x, y, random.randint(1, 2)))
 
     def handle_event(self, event):
         # D5: Tournament overlay takes top priority

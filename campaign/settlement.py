@@ -1,17 +1,32 @@
-"""Settlements on the campaign map."""
+"""Settlements on the campaign map.
+
+Phase 3: Recruitment now uses racial rosters from unit_types.RACE_ROSTER.
+Settlements owned by a faction recruit from that faction's racial roster.
+"""
 
 import pygame
 from core.settings import (
     SETTLEMENT_RADIUS, TEAM_COLORS, INCOME_PER_SETTLEMENT,
     WHITE, GREY, DARK_GREY, BROWN, GOLD,
 )
-from data.unit_types import ALL_RECRUITABLE, FACTION_SPECIALTY_UNITS
+from data.unit_types import ALL_RECRUITABLE, FACTION_SPECIALTY_UNITS, RACE_ROSTER
 
 
 class SettlementType:
     VILLAGE = "village"
     TOWN = "town"
     CASTLE = "castle"
+
+
+def _get_race_for_team(team):
+    """Map team index to race_id for roster lookup."""
+    _TEAM_TO_RACE = {
+        1: "human", 2: "high_elf", 3: "wood_elf", 4: "sea_elf",
+        5: "snow_elf", 6: "dark_elf", 7: "dwarf", 8: "orc",
+        9: "undead", 10: "troll_ogre", 11: "beastfolk",
+        12: "goblin", 13: "demon",
+    }
+    return _TEAM_TO_RACE.get(team)
 
 
 class Settlement:
@@ -46,21 +61,32 @@ class Settlement:
     def refresh_recruits(self):
         """Refresh the available recruitment pool.
 
-        Faction-owned settlements include that faction's specialty units
-        in the pool. Castles guarantee at least one specialty unit.
+        Phase 3: Uses racial roster if the owning faction has one.
+        Falls back to legacy ALL_RECRUITABLE for unowned/unknown settlements.
+        Castles guarantee at least one elite unit (last 3 in roster).
         """
         import random
-        pool = ALL_RECRUITABLE[:]
-        specialty = FACTION_SPECIALTY_UNITS.get(self.owner, [])
-        if specialty:
-            pool = pool + specialty
+        race_id = _get_race_for_team(self.owner)
+        roster = RACE_ROSTER.get(race_id) if race_id else None
+
+        if roster:
+            pool = roster[:]
+        else:
+            # Unowned or legacy faction — use generic pool
+            pool = ALL_RECRUITABLE[:]
+            specialty = FACTION_SPECIALTY_UNITS.get(self.owner, [])
+            if specialty:
+                pool = pool + specialty
+
         random.shuffle(pool)
         picks = pool[:self.recruitment_slots]
-        # Castles guarantee a faction specialty unit if available
-        if (self.settlement_type == SettlementType.CASTLE
-                and specialty
-                and not any(u in specialty for u in picks)):
-            picks[-1] = random.choice(specialty)
+
+        # Castles guarantee an elite unit (last third of roster = elites)
+        if self.settlement_type == SettlementType.CASTLE and roster and len(roster) > 3:
+            elites = roster[len(roster) * 2 // 3:]
+            if not any(u in elites for u in picks):
+                picks[-1] = random.choice(elites)
+
         self.available_recruits = picks
 
     def draw(self, surface, camera):
