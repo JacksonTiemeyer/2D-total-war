@@ -196,13 +196,9 @@ class Army:
         # Remove destroyed squads
         self.squads = [sq for sq in self.squads if not sq.is_destroyed]
 
-        # Update general XP/level
-        all_generals = battle_scene.all_generals + getattr(battle_scene, '_dead_generals', [])
-        for g in all_generals:
-            if g.team == team:
-                self.general_xp = g.xp
-                self.general_level = g.level
-                break
+        # Note: General XP/level is updated post-battle by _award_post_battle_xp
+        # in main.py. Do NOT overwrite it here from the battle general's XP,
+        # as that would discard the post-battle XP bonus calculation.
 
     def draw(self, surface, camera):
         sx, sy = camera.world_to_screen(self.x, self.y)
@@ -229,7 +225,8 @@ class Army:
             pygame.draw.circle(surface, GOLD, (sx, sy), r + 6, 2)
 
         if camera.zoom > 0.35:
-            font = pygame.font.SysFont(None, max(14, camera.scale(15)))
+            from core.utils import get_font
+            font = get_font(max(14, camera.scale(15)))
             text = font.render(f"{self.name} ({self.total_soldiers})", True, light)
             surface.blit(text, (sx - text.get_width() // 2, sy + r + 4))
 

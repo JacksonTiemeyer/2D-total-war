@@ -28,6 +28,7 @@ Controls:
 import sys
 import pygame
 from core.settings import SCREEN_WIDTH, SCREEN_HEIGHT, FPS, TITLE, WHITE, BLACK, GOLD
+from core.utils import get_font
 from campaign.campaign_scene import CampaignScene
 from battle.battle_scene import BattleScene, BattleResult
 
@@ -132,10 +133,13 @@ class Game:
                             sq.morale = max(0, sq.morale - intim)
                 self.state = GameState.BATTLE
             elif event.key == pygame.K_ESCAPE or event.key == pygame.K_r:
-                # Retreat - move player away
-                self.campaign.player_army.x -= 80
-                self.campaign.player_army.y -= 80
+                # Retreat - move player away (clamped to map bounds)
+                pa = self.campaign.player_army
+                pa.x = max(20, pa.x - 80)
+                pa.y = max(20, pa.y - 80)
                 self.current_enemy = None
+                self.is_siege = False
+                self.battle_terrain_type = None
                 self.state = GameState.CAMPAIGN
 
     def _handle_battle_event(self, event):
@@ -327,6 +331,8 @@ class Game:
         self.current_enemy = None
         self.battle = None
         self.battle_stats = None
+        self.is_siege = False
+        self.battle_terrain_type = None
         self.state = GameState.CAMPAIGN
 
     def _award_post_battle_xp(self):
@@ -380,17 +386,17 @@ class Game:
         self.screen.fill((20, 15, 10))
 
         # Title
-        big_font = pygame.font.SysFont(None, 80)
+        big_font = get_font(80)
         title = big_font.render("2D TOTAL WAR", True, GOLD)
         self.screen.blit(title, (SCREEN_WIDTH // 2 - title.get_width() // 2, 150))
 
         # Subtitle
-        font = pygame.font.SysFont(None, 28)
+        font = get_font(28)
         sub = font.render("A Total War x Mount & Blade Prototype", True, (180, 170, 140))
         self.screen.blit(sub, (SCREEN_WIDTH // 2 - sub.get_width() // 2, 240))
 
         # Features
-        small = pygame.font.SysFont(None, 22)
+        small = get_font(22)
         features = [
             "Squad-based tactical combat with formations and morale",
             "Three Kingdoms-style general dueling system",
@@ -422,9 +428,9 @@ class Game:
 
     def _draw_pre_battle(self):
         self.screen.fill((30, 25, 20))
-        font = pygame.font.SysFont(None, 48)
-        small = pygame.font.SysFont(None, 22)
-        tiny = pygame.font.SysFont(None, 18)
+        font = get_font(48)
+        small = get_font(22)
+        tiny = get_font(18)
 
         title_text = "SIEGE BATTLE!" if self._check_siege() else "BATTLE!"
         title = font.render(title_text, True, GOLD)
@@ -505,10 +511,10 @@ class Game:
         if not s:
             return
 
-        font = pygame.font.SysFont(None, 48)
-        med = pygame.font.SysFont(None, 24)
-        small = pygame.font.SysFont(None, 20)
-        tiny = pygame.font.SysFont(None, 17)
+        font = get_font(48)
+        med = get_font(24)
+        small = get_font(20)
+        tiny = get_font(17)
 
         # Title
         is_win = s["result"] == BattleResult.PLAYER_WIN

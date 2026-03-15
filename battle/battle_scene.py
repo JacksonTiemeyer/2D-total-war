@@ -25,7 +25,7 @@ from core.settings import (
     SEASON_WINTER_RANGED_PENALTY, SEASON_WINTER_HARSH_WEATHER_CHANCE,
 )
 from core.camera import Camera
-from core.utils import distance, point_in_rect, angle_between
+from core.utils import distance, point_in_rect, angle_between, get_font
 from battle.squad import Squad, SquadState, Formation
 from battle.general import General, DuelState
 from core.audio import get_audio
@@ -384,6 +384,7 @@ class BattleScene:
                 s.engaged_with = None
 
         # Check collisions in neighboring cells
+        processed_pairs = set()
         for (s1, sq1) in all_soldiers:
             cx = int(s1.x // cell_size)
             cy = int(s1.y // cell_size)
@@ -395,6 +396,11 @@ class BattleScene:
                     for (s2, sq2) in grid[key]:
                         if s1 is s2:
                             continue
+                        # Skip pairs already processed (avoid double push)
+                        pair_key = (id(s1), id(s2)) if id(s1) < id(s2) else (id(s2), id(s1))
+                        if pair_key in processed_pairs:
+                            continue
+                        processed_pairs.add(pair_key)
                         ddx = s1.x - s2.x
                         ddy = s1.y - s2.y
                         dist_sq = ddx * ddx + ddy * ddy
@@ -853,17 +859,17 @@ class BattleScene:
                          (int(sx), int(sy), int(sw), int(sh)), 2)
 
         # "DEPLOYMENT ZONE" label
-        font = pygame.font.SysFont(None, 24)
+        font = get_font(24)
         label = font.render("DEPLOYMENT ZONE", True, (150, 200, 255))
         surface.blit(label, (int(sx) + int(sw) // 2 - label.get_width() // 2,
                              int(sy) + 5))
 
         # Instructions at top
-        big_font = pygame.font.SysFont(None, 36)
+        big_font = get_font(36)
         title = big_font.render("DEPLOYMENT PHASE", True, GOLD)
         surface.blit(title, (SCREEN_WIDTH // 2 - title.get_width() // 2, 50))
 
-        inst_font = pygame.font.SysFont(None, 22)
+        inst_font = get_font(22)
         instructions = [
             "Drag units to position them within the blue zone",
             "Right-click + drag to set facing direction",
@@ -1011,8 +1017,12 @@ class BattleScene:
         for g in dead_generals:
             if g.team == 0:
                 g.on_death(self.player_squads)
+                if g in self.player_generals:
+                    self.player_generals.remove(g)
             else:
                 g.on_death(self.enemy_squads)
+                if g in self.enemy_generals:
+                    self.enemy_generals.remove(g)
             self.all_generals.remove(g)
             self._dead_generals.append(g)
 
@@ -1321,7 +1331,7 @@ class BattleScene:
                                      (int(screen_pos[0]), wy),
                                      (int(screen_pos[0] + w), wy), 1)
             if self.camera.zoom > 0.4:
-                font = pygame.font.SysFont(None, 16)
+                font = get_font(16)
                 text = font.render(t["type"].title(), True, (200, 200, 200))
                 surface.blit(text, (screen_pos[0] + 5, screen_pos[1] + 5))
 
@@ -1434,7 +1444,7 @@ class BattleScene:
 
             # Show engagement state for hovered squad
             if sq is self._hovered_squad and sq.state == SquadState.FIGHTING:
-                eng_font = pygame.font.SysFont(None, 16)
+                eng_font = get_font(16)
                 eng_text = eng_font.render("ENGAGED", True, (255, 200, 80))
                 surface.blit(eng_text, (int(scx) - eng_text.get_width() // 2,
                                         int(scy) + self.camera.scale(25)))
@@ -1640,9 +1650,9 @@ class BattleScene:
             self.selected_squads = [sq]
 
     def _draw_hud(self, surface):
-        font = pygame.font.SysFont(None, 20)
-        small_font = pygame.font.SysFont(None, 16)
-        btn_font = pygame.font.SysFont(None, 15)
+        font = get_font(20)
+        small_font = get_font(16)
+        btn_font = get_font(15)
         self._ui_buttons = {}
         self._unit_card_rects = []
 
@@ -1895,7 +1905,7 @@ class BattleScene:
         overlay.fill((0, 0, 0, 100))
         surface.blit(overlay, (0, 0))
 
-        big_font = pygame.font.SysFont(None, 72)
+        big_font = get_font(72)
         if self.result == BattleResult.PLAYER_WIN:
             text = big_font.render("VICTORY!", True, GOLD)
         else:
@@ -1903,7 +1913,7 @@ class BattleScene:
         surface.blit(text, (SCREEN_WIDTH // 2 - text.get_width() // 2,
                             SCREEN_HEIGHT // 2 - 50))
 
-        font = pygame.font.SysFont(None, 28)
+        font = get_font(28)
         sub = font.render("Press ENTER to continue", True, WHITE)
         surface.blit(sub, (SCREEN_WIDTH // 2 - sub.get_width() // 2,
                            SCREEN_HEIGHT // 2 + 30))

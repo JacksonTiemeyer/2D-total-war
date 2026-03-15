@@ -176,7 +176,7 @@ class DiplomacyManager:
         """Return diplomatic-style state for a general's opinion."""
         opinion = self.get_general_opinion(general_name)
         if opinion <= -50:
-            return DiplomacyState.HOSTILE
+            return DiplomacyState.WAR
         elif opinion < -20:
             return DiplomacyState.HOSTILE
         elif opinion < 20:

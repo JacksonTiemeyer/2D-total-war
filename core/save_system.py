@@ -87,8 +87,11 @@ def load_campaign():
     """Deserialize campaign state from JSON. Returns a dict for CampaignScene to consume."""
     if not save_exists():
         return None
-    with open(SAVE_FILE, "r") as f:
-        data = json.load(f)
+    try:
+        with open(SAVE_FILE, "r") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, IOError):
+        return None
     # Accept version 1 (legacy) and 2 (current)
     if data.get("version", 0) not in (1, 2):
         return None
@@ -174,9 +177,7 @@ def restore_campaign_scene(data):
 
     # UI state
     scene.selected_settlement = None
-    scene.show_recruitment = False
     scene.show_diplomacy = False
-    scene.recruitment_settlement = None
     scene.pending_battle = None
     scene.settlement_interaction = None
 
@@ -263,7 +264,34 @@ def restore_campaign_scene(data):
                 scene.general_manager.register_general(
                     army.general_name, army.team, personality, army.general_level)
 
-    scene._add_notification = lambda text: scene.notifications.append((text, 300))
+    # D1: Terrain zones (must match CampaignScene.__init__)
+    scene._terrain_forests = [
+        (200, 400, 120), (1000, 200, 80), (700, 800, 100),
+        (1500, 900, 90), (1900, 300, 70), (1100, 700, 110),
+        (900, 900, 85), (600, 1400, 95), (2800, 1500, 80),
+        (3300, 400, 75), (1700, 2200, 90),
+    ]
+    scene._terrain_mountains = [
+        (1100, 150, 60), (1800, 600, 50), (300, 900, 45),
+        (1600, 100, 55), (3000, 400, 50), (2500, 1400, 45),
+        (500, 1800, 40),
+    ]
+    scene._terrain_deserts = [
+        (2800, 1900, 200), (3200, 1700, 150), (3000, 2100, 120),
+    ]
+    scene._terrain_water = [
+        (1200, 2700, 250), (800, 2500, 150), (1600, 2700, 180),
+    ]
+
+    # D5: Tournament state
+    scene.tournament_towns = {}
+    scene.active_tournament = None
+    scene.show_tournament = False
+
+    # UI state missing from original restore
+    scene.show_army_panel = False
+
+    scene._add_notification = lambda text: scene.notifications.append((text, scene.NOTIFICATION_DURATION))
     scene._add_notification("Campaign loaded!")
 
     return scene

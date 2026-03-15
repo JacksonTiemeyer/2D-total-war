@@ -95,6 +95,7 @@ class Settlement:
 
         # Name
         if camera.zoom > 0.4:
-            font = pygame.font.SysFont(None, max(14, camera.scale(16)))
+            from core.utils import get_font
+            font = get_font(max(14, camera.scale(16)))
             text = font.render(self.name, True, WHITE)
             surface.blit(text, (sx - text.get_width() // 2, sy + r + 4))

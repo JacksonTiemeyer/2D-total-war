@@ -40,3 +40,16 @@ def random_offset(magnitude):
 
 def lerp(a, b, t):
     return a + (b - a) * t
+
+
+# Font cache to avoid expensive pygame.font.SysFont calls every frame
+_font_cache = {}
+
+
+def get_font(size, name=None):
+    """Get a cached pygame font. Avoids filesystem lookup every frame."""
+    import pygame
+    key = (name, size)
+    if key not in _font_cache:
+        _font_cache[key] = pygame.font.SysFont(name, size)
+    return _font_cache[key]

@@ -40,7 +40,7 @@ from core.settings import (
     TOURNAMENT_BASE_REWARD, TOURNAMENT_REP_REWARD, TOURNAMENT_ROUND_REWARDS,
 )
 from core.camera import Camera
-from core.utils import distance, point_in_rect
+from core.utils import distance, point_in_rect, get_font
 from campaign.settlement import Settlement, SettlementType
 from campaign.army import (
     Army, create_default_player_army, create_enemy_army,
@@ -619,6 +619,11 @@ class CampaignScene:
     def _process_supply_lines(self):
         """D3: Apply supply line attrition to armies far from friendly territory."""
         for army in self.armies:
+            # Independent player (no faction, no settlements) is exempt from supply attrition
+            if army.is_player and self.player_faction is None:
+                has_settlements = any(s.owner == army.team for s in self.settlements)
+                if not has_settlements:
+                    continue
             dist = self._get_nearest_friendly_settlement_dist(army)
             if dist > SUPPLY_RANGE:
                 # Morale loss
@@ -762,8 +767,19 @@ class CampaignScene:
                 # Vassal gets reduced income from faction settlements
                 self.player_army.gold += int(s.income * income_mult) // 4
 
-        # Pay upkeep
-        self.player_army.gold -= self.player_army.upkeep
+        # Pay upkeep (morale penalty and desertion if can't afford)
+        upkeep = self.player_army.upkeep
+        if self.player_army.gold >= upkeep:
+            self.player_army.gold -= upkeep
+        else:
+            self.player_army.gold -= upkeep
+            # Morale penalty for unpaid troops
+            deficit_ratio = min(1.0, abs(self.player_army.gold) / max(1, upkeep))
+            for sq in self.player_army.squads:
+                sq_morale = getattr(sq, 'campaign_morale', 100)
+                sq.campaign_morale = max(0, sq_morale - 5 * deficit_ratio)
+            if self.player_army.gold < -upkeep * 3:
+                self._add_notification("Your troops are unpaid! Risk of desertion!")
 
         # Refresh recruitment pools periodically (every 3 days)
         if self.day % 3 == 0:
@@ -1142,9 +1158,9 @@ class CampaignScene:
         overlay.fill((0, 0, 0, 180))
         surface.blit(overlay, (0, 0))
 
-        font = pygame.font.SysFont(None, 36)
-        med = pygame.font.SysFont(None, 24)
-        small = pygame.font.SysFont(None, 20)
+        font = get_font(36)
+        med = get_font(24)
+        small = get_font(20)
 
         panel_w, panel_h = 500, 400
         px = SCREEN_WIDTH // 2 - panel_w // 2
@@ -1232,7 +1248,7 @@ class CampaignScene:
             pygame.draw.polygon(surface, color, pts)
             pygame.draw.polygon(surface, (200, 200, 200), pts, 1)
         if self.camera.zoom > 0.4:
-            font = pygame.font.SysFont(None, max(12, self.camera.scale(13)))
+            font = get_font(max(12, self.camera.scale(13)))
             text = font.render(stronghold.name, True, (220, 180, 180))
             surface.blit(text, (sx - text.get_width() // 2, sy + r + 2))
 
@@ -1323,8 +1339,8 @@ class CampaignScene:
         surface.blit(fog_scaled, (0, 0))
 
     def _draw_hud(self, surface):
-        font = pygame.font.SysFont(None, 22)
-        small_font = pygame.font.SysFont(None, 16)
+        font = get_font(22)
+        small_font = get_font(16)
 
         # Top bar (C2: improved)
         bar = pygame.Surface((SCREEN_WIDTH, 36), pygame.SRCALPHA)
@@ -1415,7 +1431,7 @@ class CampaignScene:
 
         # Paused indicator (C2)
         if self.paused:
-            pause_text = pygame.font.SysFont(None, 36).render("PAUSED", True, (255, 200, 100))
+            pause_text = get_font(36).render("PAUSED", True, (255, 200, 100))
             surface.blit(pause_text, (SCREEN_WIDTH // 2 - pause_text.get_width() // 2, 45))
 
         # Notification feed (C2)
@@ -1495,9 +1511,9 @@ class CampaignScene:
         pygame.draw.rect(surface, (30, 30, 40), (panel_x, panel_y, panel_w, panel_h))
         pygame.draw.rect(surface, GOLD, (panel_x, panel_y, panel_w, panel_h), 2)
 
-        font = pygame.font.SysFont(None, 28)
-        small = pygame.font.SysFont(None, 20)
-        tiny = pygame.font.SysFont(None, 16)
+        font = get_font(28)
+        small = get_font(20)
+        tiny = get_font(16)
 
         title = font.render("Diplomacy & Relations", True, GOLD)
         surface.blit(title, (panel_x + panel_w // 2 - title.get_width() // 2, panel_y + 10))
@@ -1606,9 +1622,9 @@ class CampaignScene:
         pygame.draw.rect(surface, (30, 30, 40), (panel_x, panel_y, panel_w, panel_h))
         pygame.draw.rect(surface, GOLD, (panel_x, panel_y, panel_w, panel_h), 2)
 
-        font = pygame.font.SysFont(None, 28)
-        small = pygame.font.SysFont(None, 20)
-        tiny = pygame.font.SysFont(None, 16)
+        font = get_font(28)
+        small = get_font(20)
+        tiny = get_font(16)
 
         title = font.render("Quest Log", True, GOLD)
         surface.blit(title, (panel_x + panel_w // 2 - title.get_width() // 2, panel_y + 10))
@@ -1735,9 +1751,9 @@ class CampaignScene:
         pygame.draw.rect(surface, (30, 30, 40), (panel_x, panel_y, panel_w, panel_h))
         pygame.draw.rect(surface, GOLD, (panel_x, panel_y, panel_w, panel_h), 2)
 
-        font = pygame.font.SysFont(None, 28)
-        small = pygame.font.SysFont(None, 20)
-        tiny = pygame.font.SysFont(None, 16)
+        font = get_font(28)
+        small = get_font(20)
+        tiny = get_font(16)
 
         title = font.render("Persuade General", True, GOLD)
         surface.blit(title, (panel_x + panel_w // 2 - title.get_width() // 2, panel_y + 10))
@@ -1879,9 +1895,9 @@ class CampaignScene:
         pygame.draw.rect(surface, (30, 30, 40), (panel_x, panel_y, panel_w, panel_h))
         pygame.draw.rect(surface, GOLD, (panel_x, panel_y, panel_w, panel_h), 2)
 
-        font = pygame.font.SysFont(None, 28)
-        small = pygame.font.SysFont(None, 20)
-        tiny = pygame.font.SysFont(None, 16)
+        font = get_font(28)
+        small = get_font(20)
+        tiny = get_font(16)
 
         title = font.render("Prisoners", True, GOLD)
         surface.blit(title, (panel_x + panel_w // 2 - title.get_width() // 2, panel_y + 10))
@@ -1948,9 +1964,9 @@ class CampaignScene:
         surface.blit(overlay, (0, 0))
 
         cap = self.general_manager.player_capture
-        font = pygame.font.SysFont(None, 40)
-        small = pygame.font.SysFont(None, 24)
-        tiny = pygame.font.SysFont(None, 18)
+        font = get_font(40)
+        small = get_font(24)
+        tiny = get_font(18)
 
         title = font.render("YOU ARE CAPTURED", True, (220, 60, 60))
         surface.blit(title, (SCREEN_WIDTH // 2 - title.get_width() // 2, 200))
@@ -1991,16 +2007,25 @@ class CampaignScene:
             if event.key == pygame.K_ESCAPE or event.key == pygame.K_a:
                 self.show_army_panel = False
                 return None
-            # Number keys to disband squads
+            # Number keys to disband squads (requires double-press to confirm)
             if pygame.K_1 <= event.key <= pygame.K_9:
                 idx = event.key - pygame.K_1
                 if idx < len(self.player_army.squads):
-                    if len(self.player_army.squads) > 1:
-                        sq = self.player_army.squads[idx]
-                        self.player_army.remove_squad(idx)
-                        self._add_notification(f"Disbanded {sq.unit_stats.name}.")
+                    pending = getattr(self, '_disband_pending', None)
+                    if pending == idx:
+                        # Confirmed - disband
+                        if len(self.player_army.squads) > 1:
+                            sq = self.player_army.squads[idx]
+                            self.player_army.remove_squad(idx)
+                            self._add_notification(f"Disbanded {sq.unit_stats.name}.")
+                        else:
+                            self._add_notification("Cannot disband your last squad!")
+                        self._disband_pending = None
                     else:
-                        self._add_notification("Cannot disband your last squad!")
+                        # First press - ask for confirmation
+                        sq = self.player_army.squads[idx]
+                        self._add_notification(f"Press {idx+1} again to confirm disband {sq.unit_stats.name}")
+                        self._disband_pending = idx
             # Move squads up/down with arrow keys (reorder)
             if event.key == pygame.K_UP:
                 self._army_panel_selected = max(0,
@@ -2023,9 +2048,9 @@ class CampaignScene:
         pygame.draw.rect(surface, (30, 30, 40), (panel_x, panel_y, panel_w, panel_h))
         pygame.draw.rect(surface, GOLD, (panel_x, panel_y, panel_w, panel_h), 2)
 
-        font = pygame.font.SysFont(None, 28)
-        small = pygame.font.SysFont(None, 20)
-        tiny = pygame.font.SysFont(None, 16)
+        font = get_font(28)
+        small = get_font(20)
+        tiny = get_font(16)
 
         title = font.render("Army Management", True, GOLD)
         surface.blit(title, (panel_x + panel_w // 2 - title.get_width() // 2, panel_y + 10))

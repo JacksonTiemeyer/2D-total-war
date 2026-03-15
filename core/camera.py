@@ -64,9 +64,17 @@ class Camera:
         if keys[pygame.K_DOWN] or keys[pygame.K_s]:
             self.y -= CAMERA_SPEED
 
-        # Clamp
-        self.x = min(0, max(-(self.map_width * self.zoom - SCREEN_WIDTH), self.x))
-        self.y = min(0, max(-(self.map_height * self.zoom - SCREEN_HEIGHT), self.y))
+        # Clamp (center map if it's smaller than the screen at current zoom)
+        scaled_w = self.map_width * self.zoom
+        scaled_h = self.map_height * self.zoom
+        if scaled_w <= SCREEN_WIDTH:
+            self.x = (SCREEN_WIDTH - scaled_w) / 2
+        else:
+            self.x = min(0, max(-(scaled_w - SCREEN_WIDTH), self.x))
+        if scaled_h <= SCREEN_HEIGHT:
+            self.y = (SCREEN_HEIGHT - scaled_h) / 2
+        else:
+            self.y = min(0, max(-(scaled_h - SCREEN_HEIGHT), self.y))
 
     def world_to_screen(self, wx, wy):
         sx = wx * self.zoom + self.x

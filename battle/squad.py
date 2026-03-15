@@ -24,7 +24,7 @@ from core.settings import (
     RUN_SPEED_MULT_INFANTRY, RUN_SPEED_MULT_CAVALRY,
     COLLISION_ENGAGE_RADIUS,
 )
-from core.utils import distance, angle_between, normalize, clamp
+from core.utils import distance, angle_between, normalize, clamp, get_font
 from battle.soldier import Soldier
 
 
@@ -113,6 +113,8 @@ class Squad:
         self.visual_effects = []
         # Recently dead soldiers for death animation
         self._dying_soldiers = []
+        # Per-frame cache for alive_soldiers
+        self._alive_cache = None
 
         # Terrain modifiers (set each frame by battle scene)
         self.terrain_mods = {
@@ -197,11 +199,13 @@ class Squad:
 
     @property
     def alive_soldiers(self):
-        return [s for s in self.soldiers if s.alive]
+        if self._alive_cache is None:
+            self._alive_cache = [s for s in self.soldiers if s.alive]
+        return self._alive_cache
 
     @property
     def alive_count(self):
-        return sum(1 for s in self.soldiers if s.alive)
+        return len(self.alive_soldiers)
 
     @property
     def is_destroyed(self):
@@ -280,7 +284,9 @@ class Squad:
         for e in self.visual_effects:
             e["timer"] -= 1
         self.visual_effects = [e for e in self.visual_effects if e["timer"] > 0]
-        # Update dying soldiers
+        # Update dying soldiers (decrement death_timer so they get cleaned up)
+        for s in self._dying_soldiers:
+            s.update()
         self._dying_soldiers = [s for s in self._dying_soldiers if s.death_timer > 0]
 
     def set_formation(self, formation):
@@ -339,6 +345,8 @@ class Squad:
         self.idle_frames = 0
 
     def update(self, all_squads):
+        # Invalidate alive cache each frame
+        self._alive_cache = None
         if self.is_destroyed:
             return
 
@@ -384,6 +392,8 @@ class Squad:
         if self.morale <= MORALE_ROUT_THRESHOLD:
             # Hold the Line ability prevents routing
             if not getattr(self, '_hold_the_line', False):
+                if self.state != SquadState.BROKEN:
+                    self.state = SquadState.BROKEN
                 self.state = SquadState.ROUTED
             return
         if self.morale <= MORALE_BREAK_THRESHOLD and self.state != SquadState.BROKEN:
@@ -703,6 +713,7 @@ class Squad:
             s.y += math.sin(angle) * speed + random.uniform(-0.5, 0.5)
 
     def on_casualty(self):
+        self._alive_cache = None  # invalidate cache on soldier death
         ratio = self.alive_count / max(1, self.initial_count)
         self.morale -= MORALE_CASUALTY_LOSS + (1 - ratio) * 3
 
@@ -859,14 +870,14 @@ class Squad:
             cx, cy = self.center
             scx, scy = camera.world_to_screen(cx, cy)
             if camera.zoom > 0.4:
-                font = pygame.font.SysFont(None, max(12, camera.scale(13)))
+                font = get_font(max(12, camera.scale(13)))
                 warn = font.render("REAR!", True, (255, 80, 80))
                 surface.blit(warn, (scx - warn.get_width() // 2, scy + camera.scale(20)))
         elif self.being_flanked:
             cx, cy = self.center
             scx, scy = camera.world_to_screen(cx, cy)
             if camera.zoom > 0.4:
-                font = pygame.font.SysFont(None, max(12, camera.scale(13)))
+                font = get_font(max(12, camera.scale(13)))
                 warn = font.render("FLANKED!", True, (255, 160, 60))
                 surface.blit(warn, (scx - warn.get_width() // 2, scy + camera.scale(20)))
 
@@ -903,7 +914,7 @@ class Squad:
 
         # Squad name and count
         if camera.zoom > 0.5:
-            font = pygame.font.SysFont(None, max(12, camera.scale(14)))
+            font = get_font(max(12, camera.scale(14)))
             chevrons = ">" * self.vet_rank_index if self.vet_rank_index > 0 else ""
             label = f"{chevrons}{self.unit_stats.name} ({self.alive_count})"
             if self.state == SquadState.ROUTED:

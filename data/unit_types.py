@@ -146,7 +146,7 @@ HEAVY_CAVALRY = UnitStats(
     speed=3.5, charge_bonus=20, armor=25, shield=True,
     squad_size=8, cost=350, upkeep=30,
     weapon_strength=18, armor_penetration=30,
-    exhaustion_rate=1.3, mass=3.0,
+    exhaustion_rate=1.3, mass=4.5,
     description="The hammer to your infantry's anvil. Massive charge impact.",
 )
 

@@ -12,7 +12,7 @@ from core.settings import (
     SCREEN_WIDTH, SCREEN_HEIGHT, BATTLE_MAP_WIDTH, BATTLE_MAP_HEIGHT,
     WHITE, GREY, GOLD, BLACK, BROWN, DARK_GREY,
 )
-from core.utils import distance
+from core.utils import distance, get_font
 from battle.battle_scene import BattleScene, BattleResult
 from battle.squad import SquadState
 
@@ -62,7 +62,7 @@ class Gate:
             pygame.draw.rect(surface, (200, 100, 50), (sx, bar_y, hp_w, bar_h))
 
         if camera.zoom > 0.4:
-            font = pygame.font.SysFont(None, max(12, camera.scale(14)))
+            font = get_font(max(12, camera.scale(14)))
             label = "GATE (Destroyed)" if self.destroyed else f"GATE ({self.hp}/{self.max_hp})"
             text = font.render(label, True, WHITE)
             surface.blit(text, (sx + w // 2 - text.get_width() // 2, sy - 18))
@@ -147,7 +147,7 @@ class Tower:
                          (sx - r - 2, sy - r - 4, r * 2 + 4, 4))
 
         if camera.zoom > 0.4:
-            font = pygame.font.SysFont(None, max(12, camera.scale(12)))
+            font = get_font(max(12, camera.scale(12)))
             text = font.render("Tower", True, WHITE)
             surface.blit(text, (sx - text.get_width() // 2, sy + r + 2))
 
@@ -420,7 +420,7 @@ class SiegeScene(BattleScene):
 
     def _draw_siege_info(self, surface):
         """Draw siege-specific info: gate HP, tower status."""
-        font = pygame.font.SysFont(None, 18)
+        font = get_font(18)
         y = 40
         if self.gate:
             label = "SIEGE BATTLE"

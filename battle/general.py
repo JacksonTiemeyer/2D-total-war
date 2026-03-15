@@ -9,7 +9,7 @@ from core.settings import (
     MELEE_RANGE, MORALE_GENERAL_AURA, MORALE_GENERAL_DEATH_PENALTY,
     TEAM_COLORS, GOLD, WHITE, BLACK, YELLOW, ORANGE,
 )
-from core.utils import distance, angle_between, normalize, clamp
+from core.utils import distance, angle_between, normalize, clamp, get_font
 from battle.soldier import Soldier
 from battle.abilities import (
     get_abilities_for_type, level_from_xp, xp_for_level,
@@ -325,7 +325,7 @@ class General:
 
         # Level indicator (small number)
         if camera.zoom > 0.4:
-            lvl_font = pygame.font.SysFont(None, max(10, camera.scale(11)))
+            lvl_font = get_font(max(10, camera.scale(11)))
             lvl_text = lvl_font.render(str(self.level), True, WHITE)
             surface.blit(lvl_text, (sx - lvl_text.get_width() // 2,
                                      sy - lvl_text.get_height() // 2))
@@ -354,7 +354,7 @@ class General:
 
         # Name label
         if camera.zoom > 0.4:
-            font = pygame.font.SysFont(None, max(14, camera.scale(16)))
+            font = get_font(max(14, camera.scale(16)))
             label = f"{self.name} ({self.general_type}) Lv{self.level}"
             text = font.render(label, True, GOLD)
             surface.blit(text, (sx - text.get_width() // 2, bar_y - 16))
