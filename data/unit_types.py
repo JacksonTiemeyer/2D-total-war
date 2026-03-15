@@ -2,7 +2,12 @@
 
 
 class UnitStats:
-    """Stats for an individual soldier within a squad."""
+    """Stats for an individual soldier within a squad.
+
+    Phase 3 additions: traits, damage_type, size_category, magic_resistance,
+    damage_vulnerabilities, damage_immunities, race, spell_school, spell_list.
+    All new fields have backward-compatible defaults so existing units still work.
+    """
     def __init__(self, name, health, melee_attack, melee_defense,
                  ranged_attack=0, range_distance=0, speed=2.0,
                  charge_bonus=0, armor=0, shield=False,
@@ -12,7 +17,17 @@ class UnitStats:
                  exhaustion_rate=1.0, mass=1.0,
                  can_brace=False, is_spear=False,
                  can_fire_while_moving=False,
-                 description=""):
+                 description="",
+                 # ── Phase 3: Fantasy fields ──
+                 race="human",
+                 traits=(),
+                 size_category="normal",
+                 damage_type="physical",
+                 magic_resistance=0,
+                 damage_vulnerabilities=(),
+                 damage_immunities=(),
+                 spell_school="",
+                 spell_list=()):
         self.name = name
         self.health = health
         self.melee_attack = melee_attack
@@ -32,10 +47,29 @@ class UnitStats:
         self.ranged_armor_penetration = ranged_armor_penetration
         self.exhaustion_rate = exhaustion_rate       # multiplier on fatigue gain
         self.mass = mass                             # affects charge impact
-        self.can_brace = can_brace                   # can brace vs charges
-        self.is_spear = is_spear                     # spearman/polearm unit (diamond shape)
-        self.can_fire_while_moving = can_fire_while_moving  # can shoot while moving (horse archers)
         self.description = description
+
+        # ── Phase 3: Fantasy fields ──
+        self.race = race
+        self.traits = tuple(traits)
+        self.size_category = size_category
+        self.damage_type = damage_type
+        self.magic_resistance = magic_resistance
+        self.damage_vulnerabilities = tuple(damage_vulnerabilities)
+        self.damage_immunities = tuple(damage_immunities)
+        self.spell_school = spell_school
+        self.spell_list = tuple(spell_list)
+
+        # Legacy compatibility: derive old flags from traits if traits are set,
+        # otherwise use the explicit parameters
+        if traits:
+            self.can_brace = "can_brace" in self.traits
+            self.is_spear = "can_brace" in self.traits
+            self.can_fire_while_moving = "fire_while_moving" in self.traits
+        else:
+            self.can_brace = can_brace
+            self.is_spear = is_spear
+            self.can_fire_while_moving = can_fire_while_moving
 
 
 # === INFANTRY ===

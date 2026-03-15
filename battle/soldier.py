@@ -6,6 +6,16 @@ from core.settings import (
     EXHAUSTION_DAMAGE_PENALTY, EXHAUSTION_COOLDOWN_PENALTY,
 )
 from core.utils import distance, angle_between, normalize
+from data.traits import (
+    compute_damage_type_multiplier, compute_trait_damage_multiplier,
+    compute_frenzy_speed_bonus, should_evade, is_immune_to_poison,
+    get_damage_type, has_trait,
+    TRAIT_FRENZY, TRAIT_POISON_ATTACK, TRAIT_FLYING,
+    TRAIT_REGENERATING, TRAIT_ARMORED_CONSTRUCT,
+    DMG_PHYSICAL,
+    POISON_DOT_DAMAGE, POISON_DOT_DURATION,
+    REGENERATION_RATE, FLYING_RANGED_VULN,
+)
 
 
 class Soldier:
@@ -29,6 +39,9 @@ class Soldier:
         self.hit_flash_timer = 0    # frames remaining for white flash
         self.death_timer = -1       # -1 = alive, >0 = dying animation frames
         self.death_alpha = 1.0      # fade out on death
+        # Trait state
+        self.poison_timer = 0       # frames remaining for poison DOT
+        self.poison_dps = 0.0       # poison damage per frame
 
     def get_exhaustion_factor(self):
         """Returns 0.0 (fresh) to 1.0 (fully exhausted)."""
@@ -49,16 +62,37 @@ class Soldier:
         penalty = self.get_exhaustion_factor() * EXHAUSTION_COOLDOWN_PENALTY
         return int(base_cooldown * (1.0 + penalty))
 
-    def take_damage(self, amount, armor_penetration=0):
-        """Take damage with armor penetration support.
+    def take_damage(self, amount, armor_penetration=0, damage_type=DMG_PHYSICAL,
+                    attacker_stats=None):
+        """Take damage with armor penetration and damage type support.
 
         armor_penetration: 0-100, percentage of armor ignored.
+        damage_type: str from data.traits (physical, magical, fire, etc.)
+        attacker_stats: UnitStats of the attacker for trait interactions.
         """
-        # Calculate effective armor after penetration
-        pen_factor = 1.0 - (armor_penetration / 100.0)
-        effective_armor = self.stats.armor * pen_factor * random.uniform(0.5, 1.0)
+        # Small unit evasion check
+        if should_evade(self.stats):
+            return 0
 
-        damage = max(1, amount - effective_armor)
+        # Damage type multiplier (vulnerabilities, immunities, magic resistance)
+        type_mult = compute_damage_type_multiplier(damage_type, self.stats)
+        if type_mult <= 0:
+            return 0
+
+        # Trait-based multiplier (anti_large, anti_infantry, ethereal, size)
+        trait_mult = 1.0
+        if attacker_stats is not None:
+            trait_mult = compute_trait_damage_multiplier(attacker_stats, self.stats)
+
+        # Physical armor only reduces physical damage
+        if damage_type == DMG_PHYSICAL:
+            pen_factor = 1.0 - (armor_penetration / 100.0)
+            effective_armor = self.stats.armor * pen_factor * random.uniform(0.5, 1.0)
+        else:
+            # Non-physical damage ignores physical armor
+            effective_armor = 0
+
+        damage = max(1, amount * type_mult * trait_mult - effective_armor)
 
         if self.stats.shield and random.random() < 0.2:
             damage *= 0.5  # shield block
@@ -92,8 +126,23 @@ class Soldier:
         # Final damage = weapon strength * hit quality * flank bonus
         damage = weapon_dmg * min(hit_quality, 2.0) * flank_mult
 
-        actual = target_soldier.take_damage(damage, self.stats.armor_penetration)
-        self.attack_cooldown = self.effective_cooldown(30)
+        # Frenzy: attack speed bonus as HP drops
+        cooldown_mult = 1.0
+        if has_trait(self.stats, TRAIT_FRENZY):
+            cooldown_mult = 1.0 / compute_frenzy_speed_bonus(self.health, self.max_health)
+
+        dmg_type = get_damage_type(self.stats)
+        actual = target_soldier.take_damage(
+            damage, self.stats.armor_penetration,
+            damage_type=dmg_type, attacker_stats=self.stats)
+
+        # Poison DOT application
+        if has_trait(self.stats, TRAIT_POISON_ATTACK) and actual > 0:
+            if not is_immune_to_poison(getattr(target_soldier.stats, 'traits', ())):
+                target_soldier.poison_timer = POISON_DOT_DURATION
+                target_soldier.poison_dps = POISON_DOT_DAMAGE / 60.0  # per frame
+
+        self.attack_cooldown = int(self.effective_cooldown(30) * cooldown_mult)
         return actual
 
     def ranged_attack(self, target_soldier, accuracy_mult=1.0, damage_mult=1.0):
@@ -120,7 +169,14 @@ class Soldier:
         damage *= max(0.5, skill_mult)
         damage *= damage_mult  # terrain bonus
 
-        actual = target_soldier.take_damage(damage, self.stats.ranged_armor_penetration)
+        # Flying units take bonus ranged damage
+        if has_trait(target_soldier.stats, TRAIT_FLYING):
+            damage *= FLYING_RANGED_VULN
+
+        dmg_type = get_damage_type(self.stats)
+        actual = target_soldier.take_damage(
+            damage, self.stats.ranged_armor_penetration,
+            damage_type=dmg_type, attacker_stats=self.stats)
         self.attack_cooldown = self.effective_cooldown(60)
         return actual
 
@@ -140,3 +196,21 @@ class Soldier:
         if self.death_timer > 0:
             self.death_timer -= 1
             self.death_alpha = max(0, self.death_timer / 15.0)
+
+        if not self.alive:
+            return
+
+        # Poison DOT
+        if self.poison_timer > 0:
+            self.health -= self.poison_dps
+            self.poison_timer -= 1
+            if self.health <= 0:
+                self.health = 0
+                self.alive = False
+                self.death_timer = 15
+                self.death_alpha = 1.0
+
+        # Regeneration
+        if has_trait(self.stats, TRAIT_REGENERATING) and self.health < self.max_health:
+            self.health = min(self.max_health,
+                              self.health + self.max_health * REGENERATION_RATE / 60.0)

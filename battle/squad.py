@@ -26,6 +26,11 @@ from core.settings import (
 )
 from core.utils import distance, angle_between, normalize, clamp, get_font
 from battle.soldier import Soldier
+from data.traits import (
+    get_fear_morale_penalty, is_immune_to_morale, is_immune_to_exhaustion,
+    TRAIT_REGENERATING, FEAR_MORALE_PENALTY, TERROR_MORALE_PENALTY,
+    TERROR_CHARGE_SHOCK, STEALTH_REVEAL_RANGE,
+)
 
 
 class Formation:
@@ -69,9 +74,21 @@ class Squad:
         self.morale = 100.0
         self.selected = False
         self.target_squad = None
-        self.is_cavalry = unit_stats.speed >= 3.5
+        # Derive role flags from traits (with fallback to legacy stat-based detection)
+        traits = getattr(unit_stats, 'traits', ())
+        self.is_cavalry = 'mounted' in traits or unit_stats.speed >= 3.5
         self.is_ranged = unit_stats.ranged_attack > 0 and unit_stats.range_distance > 0
-        self.is_spear = unit_stats.can_brace
+        self.is_spear = 'can_brace' in traits or getattr(unit_stats, 'can_brace', False)
+        self.is_flying = 'flying' in traits
+        self.is_stealthy = 'stealthy' in traits
+        self.is_massive = 'massive' in traits
+        self.has_fear = 'fear' in traits or 'terror' in traits
+        self.has_terror = 'terror' in traits
+        self.morale_immune = (
+            'undead' in traits or 'armored_construct' in traits or
+            'unbreakable' in traits
+        )
+        self.exhaustion_immune = 'armored_construct' in traits
         self.fire_at_will = True
         self.charging = False
         self.charge_timer = 0
@@ -385,18 +402,20 @@ class Squad:
         self.being_flanked = False
         self.being_rear_charged = False
 
-        # Handle routing
-        if self.state == SquadState.ROUTED:
+        # Handle routing (morale-immune units skip all morale state changes)
+        if self.morale_immune:
+            pass  # never rout, never break
+        elif self.state == SquadState.ROUTED:
             self._do_rout()
             return
-        if self.morale <= MORALE_ROUT_THRESHOLD:
+        elif self.morale <= MORALE_ROUT_THRESHOLD:
             # Hold the Line ability prevents routing
             if not getattr(self, '_hold_the_line', False):
                 if self.state != SquadState.BROKEN:
                     self.state = SquadState.BROKEN
                 self.state = SquadState.ROUTED
             return
-        if self.morale <= MORALE_BREAK_THRESHOLD and self.state != SquadState.BROKEN:
+        elif self.morale <= MORALE_BREAK_THRESHOLD and self.state != SquadState.BROKEN:
             self.state = SquadState.BROKEN
             self.target_x = self.x + math.cos(self.facing_angle + math.pi) * 200
             self.target_y = self.y + math.sin(self.facing_angle + math.pi) * 200
@@ -450,6 +469,9 @@ class Squad:
 
     def _update_exhaustion(self):
         """Increase exhaustion based on current activity and movement mode."""
+        # Constructs don't tire
+        if self.exhaustion_immune:
+            return
         rate = EXHAUSTION_IDLE_RATE
         if self.state == SquadState.MOVING:
             # Movement exhaustion depends on mode
@@ -714,10 +736,13 @@ class Squad:
 
     def on_casualty(self):
         self._alive_cache = None  # invalidate cache on soldier death
-        ratio = self.alive_count / max(1, self.initial_count)
-        self.morale -= MORALE_CASUALTY_LOSS + (1 - ratio) * 3
+        if not self.morale_immune:
+            ratio = self.alive_count / max(1, self.initial_count)
+            self.morale -= MORALE_CASUALTY_LOSS + (1 - ratio) * 3
 
     def apply_morale_modifier(self, amount):
+        if self.morale_immune:
+            return
         self.morale = clamp(self.morale + amount, 0, 100)
 
     def reduce_exhaustion(self, amount):
