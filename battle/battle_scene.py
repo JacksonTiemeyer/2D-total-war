@@ -22,7 +22,7 @@ from core.settings import (
     MOVE_MODE_WALK, MOVE_MODE_MARCH, MOVE_MODE_RUN,
     SEASON_SUMMER, SEASON_AUTUMN, SEASON_WINTER,
     SEASON_SUMMER_EXHAUSTION_MULT, SEASON_AUTUMN_MUD_CHANCE,
-    SEASON_WINTER_RANGED_PENALTY, SEASON_WINTER_SNOW_CHANCE,
+    SEASON_WINTER_RANGED_PENALTY, SEASON_WINTER_HARSH_WEATHER_CHANCE,
 )
 from core.camera import Camera
 from core.utils import distance, point_in_rect, angle_between
@@ -112,7 +112,7 @@ class BattleScene:
         """D2: Choose weather based on season and terrain."""
         if self.season == SEASON_AUTUMN and random.random() < SEASON_AUTUMN_MUD_CHANCE:
             return "mud"
-        if self.season == SEASON_WINTER and random.random() < SEASON_WINTER_SNOW_CHANCE:
+        if self.season == SEASON_WINTER and random.random() < SEASON_WINTER_HARSH_WEATHER_CHANCE:
             return random.choice(["fog", "rain"])
         # Desert terrain tends to be clear
         if self.terrain_type == "desert":

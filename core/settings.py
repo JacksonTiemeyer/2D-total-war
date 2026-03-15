@@ -273,7 +273,7 @@ SEASON_AUTUMN_MUD_CHANCE = 0.4         # chance of mud weather in autumn battles
 SEASON_WINTER_MOVE_PENALTY = 0.7       # -30% campaign movement in winter
 SEASON_WINTER_MOUNTAIN_ATTRITION = 1   # soldiers lost per day in mountains during winter
 SEASON_WINTER_RANGED_PENALTY = 0.85    # -15% ranged accuracy in winter battles
-SEASON_WINTER_SNOW_CHANCE = 0.5        # chance of fog/rain weather in winter battles
+SEASON_WINTER_HARSH_WEATHER_CHANCE = 0.5  # chance of fog/rain weather in winter battles
 
 # D3: Supply Lines
 SUPPLY_RANGE = 400                  # max distance from friendly settlement before attrition
