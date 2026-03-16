@@ -55,6 +55,7 @@ from campaign.faction import FACTION_ROSTER, FACTION_BY_TEAM
 from campaign.diplomacy import DiplomacyManager, DiplomacyState
 from campaign.generals import GeneralManager
 from campaign.player import PlayerCharacter, get_tier_for_level
+from campaign.companion import CompanionManager, generate_tavern_companions
 
 
 class CampaignScene:
@@ -139,6 +140,13 @@ class CampaignScene:
         self.show_persuasion = False      # persuasion dialog overlay
         self.persuasion_target = None     # army being persuaded
         self.show_prisoners = False       # prisoner management overlay
+
+        # Companion system
+        self.companion_manager = CompanionManager()
+        self.show_companions = False
+        self.show_tavern = False
+        self._tavern_companions = []
+        self._tavern_settlement = None
         self.prisoner_action_msg = None   # feedback message for prisoner actions
         self.prisoner_action_timer = 0
 
@@ -417,6 +425,14 @@ class CampaignScene:
         if getattr(self, 'show_prisoners', False):
             return self._handle_prisoner_event(event)
 
+        # Companion panel overlay
+        if self.show_companions:
+            return self._handle_companion_event(event)
+
+        # Tavern panel overlay
+        if self.show_tavern:
+            return self._handle_tavern_event(event)
+
         # D6: Player capture overlay
         if self.general_manager.player_capture.is_captured:
             return self._handle_capture_event(event)
@@ -460,6 +476,21 @@ class CampaignScene:
                     self.paused = True
                 else:
                     self._add_notification("No prisoners held.")
+            elif event.key == pygame.K_n:
+                self.show_companions = not self.show_companions
+            elif event.key == pygame.K_t:
+                # Check if near a friendly settlement for tavern
+                for s in self.settlements:
+                    if s.owner == self.player_army.team or s.owner is None:
+                        if distance(self.player_army.x, self.player_army.y, s.x, s.y) < 60:
+                            self._tavern_settlement = s
+                            self._tavern_companions = generate_tavern_companions(
+                                s.name, self.day,
+                                self.player_character.level if self.player_character else 1)
+                            self.show_tavern = True
+                            break
+                else:
+                    self._add_notification("No friendly settlement nearby for tavern.")
             elif event.key == pygame.K_s and (pygame.key.get_mods() & pygame.KMOD_CTRL):
                 self._save_game()
 
@@ -962,6 +993,12 @@ class CampaignScene:
 
         # D5: Tournament scheduling
         self._process_tournaments()
+
+        # Companion daily tick
+        self.companion_manager.tick_day()
+        departed = self.companion_manager.check_departures()
+        for name in departed:
+            self._add_notification(f"Companion {name} has left your service!")
 
         # Mark fog as needing update
         self._fog_needs_update = True

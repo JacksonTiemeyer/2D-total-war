@@ -407,6 +407,22 @@ def get_abilities_for_type(general_type):
     return []
 
 
+def get_abilities_for_class(player_class):
+    """Return ability tree based on player class.
+
+    Warlord/Engineer -> Commander tree (army buffs)
+    Champion -> Champion tree (personal combat)
+    Battlemage/Necromancer/Rogue -> Strategist tree (tactical)
+    """
+    if player_class in ("warlord", "engineer"):
+        return get_commander_abilities()
+    elif player_class == "champion":
+        return get_champion_abilities()
+    elif player_class in ("battlemage", "necromancer", "rogue"):
+        return get_strategist_abilities()
+    return []
+
+
 # ── Leveling ─────────────────────────────────────────────────────────────
 
 LEVEL_THRESHOLDS = [0, 3, 8, 15]  # XP needed for levels 1-4

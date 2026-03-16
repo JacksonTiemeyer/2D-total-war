@@ -7,6 +7,7 @@ level, abilities, and loyalty.
 Full implementation in Batch 10.
 """
 
+import random
 from campaign.player import ALL_CLASSES, xp_for_level
 
 
@@ -67,3 +68,83 @@ class Companion:
         c.alive = data.get("alive", True)
         c.capture_timer = data.get("capture_timer", 0)
         return c
+
+
+# ── Companion Manager ─────────────────────────────────────────────────
+
+class CompanionManager:
+    """Manages the player's active companions."""
+
+    def __init__(self):
+        self.companions = []  # list of Companion
+
+    def add(self, companion):
+        self.companions.append(companion)
+
+    def remove(self, name):
+        self.companions = [c for c in self.companions if c.name != name]
+
+    def get(self, name):
+        for c in self.companions:
+            if c.name == name:
+                return c
+        return None
+
+    def tick_day(self):
+        """Daily update: loyalty decay for ambitious companions, capture timers."""
+        for c in self.companions:
+            if not c.alive:
+                c.capture_timer -= 1
+                if c.capture_timer <= 0:
+                    c.alive = True
+            if c.personality == "ambitious":
+                c.modify_loyalty(-1)
+            elif c.personality == "greedy":
+                c.modify_loyalty(-1)
+
+    def check_departures(self):
+        """Remove companions with 0 loyalty. Returns list of departed names."""
+        departed = [c.name for c in self.companions if c.loyalty <= 0 and c.alive]
+        self.companions = [c for c in self.companions if c.loyalty > 0 or not c.alive]
+        return departed
+
+    def serialize(self):
+        return [c.serialize() for c in self.companions]
+
+    def deserialize(self, data_list):
+        self.companions = [Companion.deserialize(d) for d in data_list]
+
+
+# ── Tavern Companion Generation ───────────────────────────────────────
+
+_COMPANION_NAMES = [
+    "Alaric", "Brenna", "Caelum", "Duskara", "Eldrin",
+    "Freya", "Gideon", "Halia", "Ivor", "Jessa",
+    "Kael", "Lyria", "Magnus", "Nessa", "Orin",
+    "Petra", "Quinn", "Rowan", "Sable", "Theron",
+]
+
+_PERSONALITIES = ["loyal", "ambitious", "greedy", "stoic"]
+
+_RACES = ["human", "elf", "dwarf", "orc", "undead"]
+
+
+def generate_tavern_companions(settlement_name, day, player_level, count=3):
+    """Generate random companions available at a tavern.
+
+    Uses day + settlement_name as seed for deterministic but varied results.
+    Refreshes when day changes.
+    """
+    seed = hash((settlement_name, day // 7))  # refresh weekly
+    rng = random.Random(seed)
+    companions = []
+    used_names = set()
+    for _ in range(count):
+        name = rng.choice([n for n in _COMPANION_NAMES if n not in used_names])
+        used_names.add(name)
+        race = rng.choice(_RACES)
+        cls = rng.choice(list(ALL_CLASSES))
+        level = max(1, player_level + rng.randint(-3, 1))
+        personality = rng.choice(_PERSONALITIES)
+        companions.append(Companion(name, race, cls, level, personality))
+    return companions

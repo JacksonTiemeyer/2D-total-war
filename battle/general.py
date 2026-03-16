@@ -27,13 +27,13 @@ class DuelState:
 class General:
     """A hero unit that leads an army and can engage in duels."""
 
-    def __init__(self, name, unit_stats, team, x, y):
+    def __init__(self, name, unit_stats, team, x, y, player_class=None, health_mult=1.0):
         self.name = name
         self.unit_stats = unit_stats
         self.team = team
         self.x = x
         self.y = y
-        self.health = unit_stats.health * GENERAL_HEALTH_MULTIPLIER
+        self.health = unit_stats.health * GENERAL_HEALTH_MULTIPLIER * health_mult
         self.max_health = self.health
         self.alive = True
         self.speed = unit_stats.speed
@@ -80,6 +80,33 @@ class General:
         self._scout_active = False
         self._all_enemy_generals = []  # set by battle scene
         self.visible = True  # fog of war
+
+        # Player class abilities (overrides type-based if provided)
+        self.player_class = None
+        if player_class:
+            self.player_class = player_class
+            from battle.abilities import get_abilities_for_class
+            self.abilities = get_abilities_for_class(player_class)
+
+        # Warlord class gets commander-style aura bonuses
+        if self.player_class == "warlord":
+            self.aura_radius = 150
+            self.morale_aura = MORALE_GENERAL_AURA * 1.5
+
+        # New buff flags from class abilities (Batch 10)
+        self._mana_shield_active = False
+        self._enchant_weapons_active = False
+        self._death_aura_active = False
+        self._soul_harvest_active = False
+        self._lich_transform_active = False
+        self._unstoppable_active = False
+        self._slayer_active = False
+        self._one_man_army_active = False
+        self._avatar_active = False
+        self._sabotage_active = False
+        self._shadow_war_active = False
+        self._iron_discipline_active = False
+        self._cooldown_reduction = 0  # percentage reduction from passives (Mage Lord, Master Engineer)
 
     @property
     def available_abilities(self):
@@ -156,6 +183,12 @@ class General:
         if scout and hasattr(scout, 'active_timer'):
             if scout.active_timer <= 0:
                 self._scout_active = False
+
+        # Clear timed class ability buff flags
+        for a in self.abilities:
+            if hasattr(a, 'active_timer') and a.active_timer <= 0:
+                # Each ability is responsible for clearing its own flags via tick()
+                pass
 
         # Duel takes priority
         if self.duel_state == DuelState.ACTIVE:
@@ -234,6 +267,12 @@ class General:
         if self.general_type == "Champion":
             my_roll *= 1.3
         if opponent.general_type == "Champion":
+            opp_roll *= 1.3
+
+        # Champion player class also gets duel bonus
+        if self.player_class == "champion":
+            my_roll *= 1.3
+        if opponent.player_class == "champion":
             opp_roll *= 1.3
 
         if my_roll > opp_roll:
@@ -355,7 +394,8 @@ class General:
         # Name label
         if camera.zoom > 0.4:
             font = get_font(max(14, camera.scale(16)))
-            label = f"{self.name} ({self.general_type}) Lv{self.level}"
+            display_type = self.player_class.capitalize() if self.player_class else self.general_type
+            label = f"{self.name} ({display_type}) Lv{self.level}"
             text = font.render(label, True, GOLD)
             surface.blit(text, (sx - text.get_width() // 2, bar_y - 16))
 
