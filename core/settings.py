@@ -138,7 +138,7 @@ RUN_SPEED_MULT_CAVALRY = 1.6
 
 # Exhaustion
 EXHAUSTION_MAX = 100.0
-EXHAUSTION_IDLE_RATE = 0.002        # per frame when standing still
+EXHAUSTION_IDLE_RATE = -0.005        # per frame when standing still (negative = recovery)
 EXHAUSTION_WALK_RATE = 0.0          # per frame when walking (no exhaustion)
 EXHAUSTION_MARCH_RATE = 0.002       # per frame when marching (minimal)
 EXHAUSTION_MOVE_RATE = 0.008        # per frame when moving (legacy/run)

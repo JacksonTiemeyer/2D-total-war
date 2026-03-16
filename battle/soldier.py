@@ -185,7 +185,8 @@ class Soldier:
         from core.settings import BRACE_CHARGE_DAMAGE_MULT
         damage = self.effective_weapon_strength() * BRACE_CHARGE_DAMAGE_MULT
         damage *= random.uniform(0.8, 1.2)
-        actual = charging_soldier.take_damage(damage, self.stats.armor_penetration)
+        actual = charging_soldier.take_damage(damage, self.stats.armor_penetration,
+                                              attacker_stats=self.stats)
         return actual
 
     def update(self):

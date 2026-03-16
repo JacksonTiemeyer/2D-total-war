@@ -214,8 +214,9 @@ class BattleScene:
         }
         if terrain_type == "hill":
             mods["ranged_damage_mult"] = HILL_RANGED_BONUS
-            mods["charge_mult"] = HILL_CHARGE_DOWNHILL_BONUS
-            mods["speed_mult"] = HILL_SPEED_UPHILL_PENALTY  # penalty for enemies moving onto hill
+            mods["melee_defense_mult"] = 1.1  # defensive advantage on high ground
+            # Charge/speed modifiers are directional — applied in combat resolution
+            # based on attacker vs defender terrain, not statically here
         elif terrain_type == "forest":
             if squad.is_cavalry:
                 mods["speed_mult"] = FOREST_CAVALRY_SPEED_MULT
@@ -386,6 +387,10 @@ class BattleScene:
                 not s.engaged_with.alive
                 or sq.state == SquadState.ROUTED
             ):
+                # Clear reverse reference to avoid stale pointers
+                partner = s.engaged_with
+                if partner.engaged_with is s:
+                    partner.engaged_with = None
                 s.engaged_with = None
 
         # Check collisions in neighboring cells
@@ -526,10 +531,9 @@ class BattleScene:
         alive = squad.alive_soldiers
         if len(alive) <= 1:
             return 1
-        import math as _math
         # Use facing angle to determine front-back axis
-        cos_f = _math.cos(squad.facing_angle)
-        sin_f = _math.sin(squad.facing_angle)
+        cos_f = math.cos(squad.facing_angle)
+        sin_f = math.sin(squad.facing_angle)
         cx, cy = squad.center
         # Project each soldier onto the facing axis
         depths = []

@@ -23,6 +23,7 @@ from core.settings import (
     WALK_SPEED_MULT, MARCH_SPEED_MULT,
     RUN_SPEED_MULT_INFANTRY, RUN_SPEED_MULT_CAVALRY,
     COLLISION_ENGAGE_RADIUS,
+    HILL_CHARGE_DOWNHILL_BONUS, HILL_SPEED_UPHILL_PENALTY,
 )
 from core.utils import distance, angle_between, normalize, clamp, get_font
 from battle.soldier import Soldier
@@ -412,8 +413,11 @@ class Squad:
             # Hold the Line ability prevents routing
             if not getattr(self, '_hold_the_line', False):
                 if self.state != SquadState.BROKEN:
+                    # First drop to BROKEN; will rout next frame if morale stays low
                     self.state = SquadState.BROKEN
-                self.state = SquadState.ROUTED
+                else:
+                    # Already broken — now fully rout
+                    self.state = SquadState.ROUTED
             return
         elif self.morale <= MORALE_BREAK_THRESHOLD and self.state != SquadState.BROKEN:
             self.state = SquadState.BROKEN
@@ -497,7 +501,7 @@ class Squad:
         season_mult = self.terrain_mods.get('exhaustion_mult', 1.0)
         rate *= season_mult
 
-        self.exhaustion = min(EXHAUSTION_MAX, self.exhaustion + rate)
+        self.exhaustion = max(0.0, min(EXHAUSTION_MAX, self.exhaustion + rate))
 
         # Sync exhaustion to soldiers
         for s in self.alive_soldiers:
@@ -555,7 +559,15 @@ class Squad:
         self.target_x = tx
         self.target_y = ty
         self.facing_angle = angle_between(self.x, self.y, tx, ty)
-        charge_terrain = self.terrain_mods.get("charge_mult", 1.0)
+        # Directional hill charge modifier: bonus downhill, penalty uphill
+        my_terrain = self.terrain_mods.get("terrain_type")
+        target_terrain = self.target_squad.terrain_mods.get("terrain_type") if self.target_squad else None
+        if my_terrain == "hill" and target_terrain != "hill":
+            charge_terrain = HILL_CHARGE_DOWNHILL_BONUS  # charging downhill
+        elif my_terrain != "hill" and target_terrain == "hill":
+            charge_terrain = HILL_SPEED_UPHILL_PENALTY   # charging uphill
+        else:
+            charge_terrain = 1.0
         charge_form, _, _, _, _ = self.formation_mods
         speed_mult = (1.5 if self.is_cavalry else 1.2) * charge_terrain * charge_form
         self._do_movement(speed_mult=speed_mult)
@@ -571,6 +583,7 @@ class Squad:
             dmg = bracing_soldiers[i].brace_counter_attack(charging_soldiers[i])
             if dmg > 0 and not charging_soldiers[i].alive:
                 self.target_squad.kills += 1
+                self._dying_soldiers.append(charging_soldiers[i])
                 self.on_casualty()
 
         # Morale shock to the charging unit
@@ -704,6 +717,8 @@ class Squad:
             d = distance(self.x, self.y, sq.x, sq.y)
             if d < engage_range:
                 self.give_attack_order(sq)
+                # Defensive stance shouldn't sprint — use march instead of run
+                self.movement_mode = MOVE_MODE_MARCH
                 return
 
     def _skirmish_retreat(self, all_squads):
@@ -829,8 +844,8 @@ class Squad:
     def draw(self, surface, camera, fog_hidden=False):
         if fog_hidden:
             return
-        color = TEAM_COLORS[self.team]
-        light_color = TEAM_COLORS_LIGHT[self.team]
+        color = TEAM_COLORS.get(self.team, (128, 128, 128))
+        light_color = TEAM_COLORS_LIGHT.get(self.team, (180, 180, 180))
 
         # Draw dying soldiers (fade out)
         for s in self._dying_soldiers:
@@ -917,8 +932,8 @@ class Squad:
         if self.selected:
             bbox = self.get_bounding_box()
             screen_pos = camera.world_to_screen(bbox[0], bbox[1])
-            w = camera.scale(bbox[2])
-            h = camera.scale(bbox[3])
+            w = int(camera.scale(bbox[2]))
+            h = int(camera.scale(bbox[3]))
             pygame.draw.rect(surface, light_color, (*screen_pos, w, h), 2)
 
         # Bars above squad: morale + exhaustion
@@ -992,7 +1007,7 @@ class Squad:
 
         # Range indicator for ranged units (when selected)
         if self.selected and self.is_ranged:
-            r = camera.scale(self.unit_stats.range_distance)
+            r = int(camera.scale(self.unit_stats.range_distance))
             if self.unit_stats.can_fire_while_moving:
                 # Circle range for units that can fire while moving
                 range_surf = pygame.Surface((r * 2, r * 2), pygame.SRCALPHA)
