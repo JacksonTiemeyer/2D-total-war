@@ -218,6 +218,24 @@ class General:
             if d < self.aura_radius:
                 sq.apply_morale_modifier(self.morale_aura * 0.01)
 
+        # Death Aura: DOT to nearby enemies (every 30 frames = 0.5s)
+        self._frame_counter = getattr(self, '_frame_counter', 0) + 1
+        if self._death_aura_active and self._frame_counter % 30 == 0:
+            for sq in enemy_squads:
+                if sq.is_destroyed:
+                    continue
+                d = distance(self.x, self.y, sq.x, sq.y)
+                if d < 150:
+                    for s in sq.alive_soldiers[:3]:  # damage up to 3 soldiers
+                        s.health -= 2
+                        if s.health <= 0:
+                            s.alive = False
+                            sq.on_casualty()
+
+        # Unstoppable: immune to exhaustion effects (reset speed penalty)
+        if self._unstoppable_active:
+            self.speed = self.unit_stats.speed  # override any speed debuff
+
     def _update_duel(self):
         """Process one frame of a duel."""
         if not self.duel_opponent or not self.duel_opponent.alive:
@@ -258,6 +276,24 @@ class General:
         if self._bloodlust_active:
             my_attack *= 1.5
         if opponent._bloodlust_active:
+            opp_attack *= 1.5
+
+        # One-Man Army: +100% attack
+        if self._one_man_army_active:
+            my_attack *= 2.0
+        if opponent._one_man_army_active:
+            opp_attack *= 2.0
+
+        # Avatar of War: +150% attack
+        if self._avatar_active:
+            my_attack *= 2.5
+        if opponent._avatar_active:
+            opp_attack *= 2.5
+
+        # Slayer: bonus damage vs high-level opponents
+        if self._slayer_active and opponent.level >= 5:
+            my_attack *= 1.5
+        if opponent._slayer_active and self.level >= 5:
             opp_attack *= 1.5
 
         my_roll = my_attack * random.uniform(0.6, 1.4)
@@ -320,6 +356,19 @@ class General:
     def take_damage(self, amount):
         effective_armor = self.armor * random.uniform(0.5, 1.0)
         damage = max(1, amount - effective_armor)
+        # Mana Shield: 40% damage reduction
+        if self._mana_shield_active:
+            damage = int(damage * 0.6)
+        # Avatar of War: 50% damage reduction
+        if self._avatar_active:
+            damage = int(damage * 0.5)
+        # One-Man Army: 30% damage reduction
+        if self._one_man_army_active:
+            damage = int(damage * 0.7)
+        # Lich Transform: passive regen (heal 1 per hit taken)
+        if self._lich_transform_active:
+            self.health = min(self.max_health, self.health + 1)
+        damage = max(1, damage)
         self.health -= damage
         if self.health <= 0:
             self.health = 0
@@ -354,6 +403,27 @@ class General:
             glow_r = camera.scale(GENERAL_RADIUS + 6)
             glow_surf = pygame.Surface((glow_r * 2, glow_r * 2), pygame.SRCALPHA)
             pygame.draw.circle(glow_surf, (255, 50, 30, 80), (glow_r, glow_r), glow_r)
+            surface.blit(glow_surf, (sx - glow_r, sy - glow_r))
+
+        # Mana Shield glow (blue)
+        if self._mana_shield_active:
+            glow_r = camera.scale(GENERAL_RADIUS + 8)
+            glow_surf = pygame.Surface((glow_r * 2, glow_r * 2), pygame.SRCALPHA)
+            pygame.draw.circle(glow_surf, (50, 100, 255, 60), (glow_r, glow_r), glow_r)
+            surface.blit(glow_surf, (sx - glow_r, sy - glow_r))
+
+        # Avatar of War glow (golden, large)
+        if self._avatar_active:
+            glow_r = camera.scale(GENERAL_RADIUS + 12)
+            glow_surf = pygame.Surface((glow_r * 2, glow_r * 2), pygame.SRCALPHA)
+            pygame.draw.circle(glow_surf, (255, 200, 50, 80), (glow_r, glow_r), glow_r)
+            surface.blit(glow_surf, (sx - glow_r, sy - glow_r))
+
+        # Death Aura glow (purple)
+        if self._death_aura_active:
+            glow_r = camera.scale(GENERAL_RADIUS + 8)
+            glow_surf = pygame.Surface((glow_r * 2, glow_r * 2), pygame.SRCALPHA)
+            pygame.draw.circle(glow_surf, (120, 0, 200, 60), (glow_r, glow_r), glow_r)
             surface.blit(glow_surf, (sx - glow_r, sy - glow_r))
 
         # General body - circle with outer ring + gold accent

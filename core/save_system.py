@@ -88,6 +88,10 @@ def save_campaign(campaign_scene):
     if hasattr(campaign_scene, 'player_character') and campaign_scene.player_character:
         data["player_character"] = campaign_scene.player_character.serialize()
 
+    # Phase 3: Companions
+    if hasattr(campaign_scene, 'companion_manager'):
+        data["companions"] = campaign_scene.companion_manager.serialize()
+
     os.makedirs(SAVE_DIR, exist_ok=True)
     with open(SAVE_FILE, "w") as f:
         json.dump(data, f, indent=2)
@@ -305,6 +309,13 @@ def restore_campaign_scene(data):
         scene.player_character = PlayerCharacter.deserialize(data["player_character"])
         # Also update army name
         scene.player_army.general_name = scene.player_character.name
+
+    # Phase 3: Restore companions
+    if "companions" in data:
+        from campaign.companion import CompanionManager
+        if not hasattr(scene, 'companion_manager'):
+            scene.companion_manager = CompanionManager()
+        scene.companion_manager.deserialize(data["companions"])
 
     # UI state missing from original restore
     scene.show_army_panel = False

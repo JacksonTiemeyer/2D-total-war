@@ -38,7 +38,7 @@ class BattleResult:
 
 
 class BattleScene:
-    def __init__(self, player_army, enemy_army, terrain_type=None, season=None):
+    def __init__(self, player_army, enemy_army, terrain_type=None, season=None, companions=None):
         self.camera = Camera(BATTLE_MAP_WIDTH, BATTLE_MAP_HEIGHT)
         self.camera.center_on(BATTLE_MAP_WIDTH / 2, BATTLE_MAP_HEIGHT / 2)
 
@@ -101,6 +101,11 @@ class BattleScene:
 
         # Deploy armies
         self._deploy_armies(player_army, enemy_army)
+
+        # Deploy companions as additional player generals
+        self._companion_generals = []  # track for post-battle XP
+        if companions:
+            self._deploy_companions(companions)
 
         # Wire up generals' enemy general references (for Challenge ability)
         for g in self.player_generals:
@@ -557,7 +562,8 @@ class BattleScene:
         gen_data = player_army.get("general")
         if gen_data:
             gen = General(gen_data["name"], gen_data["stats"], 0,
-                          start_x - 50, BATTLE_MAP_HEIGHT // 2)
+                          start_x - 50, BATTLE_MAP_HEIGHT // 2,
+                          player_class=gen_data.get("player_class"))
             if "xp" in gen_data:
                 gen.xp = gen_data["xp"]
                 gen.level = gen_data["level"]
@@ -584,6 +590,23 @@ class BattleScene:
             self.enemy_generals.append(gen)
 
         self.all_squads = self.player_squads + self.enemy_squads
+        self.all_generals = self.player_generals + self.enemy_generals
+
+    def _deploy_companions(self, companions):
+        """Deploy companion heroes as additional player generals."""
+        base_y = BATTLE_MAP_HEIGHT // 2
+        for i, comp_data in enumerate(companions):
+            offset_y = (i + 1) * 100 - (len(companions) * 50)
+            gen = General(
+                comp_data["name"], comp_data["stats"], 0,
+                200, base_y + offset_y,
+                player_class=comp_data.get("player_class"),
+            )
+            if "level" in comp_data:
+                gen.level = comp_data["level"]
+            gen._companion_name = comp_data["name"]  # tag for post-battle tracking
+            self.player_generals.append(gen)
+            self._companion_generals.append(gen)
         self.all_generals = self.player_generals + self.enemy_generals
 
     def handle_event(self, event):

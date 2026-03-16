@@ -131,12 +131,15 @@ class Game:
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_RETURN or event.key == pygame.K_b:
                 # Start battle - check if siege
-                player_data = self.campaign.player_army.get_battle_data()
+                pc_class = self.player_character.player_class if self.player_character else None
+                player_data = self.campaign.player_army.get_battle_data(player_class=pc_class)
                 enemy_data = self.current_enemy.get_battle_data()
                 self.is_siege = self._check_siege()
                 # D1: Get terrain type, D2: Get season for weather bias
                 terrain_type = getattr(self, 'battle_terrain_type', None)
                 season = self.campaign._get_current_season() if self.campaign else None
+                # Collect companion battle data
+                companions_data = self._get_companion_battle_data()
                 if self.is_siege:
                     from battle.siege_scene import SiegeScene
                     self.battle = SiegeScene(player_data, enemy_data,
@@ -144,7 +147,8 @@ class Game:
                 else:
                     self.battle = BattleScene(player_data, enemy_data,
                                               terrain_type=terrain_type,
-                                              season=season)
+                                              season=season,
+                                              companions=companions_data)
                 # D6: Apply intimidation bonus from executions
                 if self.campaign:
                     intim = self.campaign.general_manager.consume_intimidation_bonus()
@@ -202,6 +206,28 @@ class Game:
             self.battle.update()
         elif self.state == GameState.SKIRMISH_SETUP:
             pass  # skirmish setup is event-driven
+
+    def _get_companion_battle_data(self):
+        """Build companion deployment data for battle scene."""
+        if not self.campaign or not hasattr(self.campaign, 'companion_manager'):
+            return None
+        from data.unit_types import SWORDSMEN
+        companions = self.campaign.companion_manager.companions
+        if not companions:
+            return None
+        data = []
+        for c in companions:
+            if not c.alive:
+                continue
+            # Use swordsmen stats as base for the companion hero
+            base_stats = SWORDSMEN
+            data.append({
+                "name": c.name,
+                "stats": base_stats,
+                "level": c.level,
+                "player_class": c.companion_class,
+            })
+        return data if data else None
 
     def _check_siege(self):
         """Check if the battle should be a siege (near a castle settlement)."""
@@ -395,6 +421,18 @@ class Game:
             if levels_gained > 0:
                 self.campaign._add_notification(
                     f"Level up! You are now level {self.player_character.level} ({self.player_character.tier_name})")
+
+        # Award XP to companions
+        if hasattr(self.campaign, 'companion_manager'):
+            companion_xp = max(1, xp // 2)  # companions get half XP
+            for comp in self.campaign.companion_manager.companions:
+                if comp.alive:
+                    levels = comp.add_xp(companion_xp)
+                    if levels > 0:
+                        self.campaign._add_notification(
+                            f"Companion {comp.name} is now level {comp.level}!")
+                    # Battle participation increases loyalty
+                    comp.modify_loyalty(2 if is_win else -1)
 
     def _draw(self):
         if self.state == GameState.MAIN_MENU:

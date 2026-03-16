@@ -1290,6 +1290,14 @@ class CampaignScene:
         if getattr(self, 'show_prisoners', False):
             self._draw_prisoners(surface)
 
+        # Companion panel
+        if self.show_companions:
+            self._draw_companion_panel(surface)
+
+        # Tavern panel
+        if self.show_tavern:
+            self._draw_tavern_panel(surface)
+
         # D5: Tournament overlay
         if self.show_tournament and self.active_tournament:
             self._draw_tournament(surface)
@@ -2086,6 +2094,251 @@ class CampaignScene:
 
         footer = tiny.render(
             "[1-9] Select  |  [R]ansom [C]recruit [X]execute  |  [J/ESC] Close",
+            True, (150, 150, 150))
+        surface.blit(footer, (panel_x + panel_w // 2 - footer.get_width() // 2,
+                              panel_y + panel_h - 25))
+
+    # ------------------------------------------------------------------
+    # Companion panel UI
+    # ------------------------------------------------------------------
+
+    def _handle_companion_event(self, event):
+        """Handle input on the companion management panel."""
+        if event.type != pygame.KEYDOWN:
+            return True
+        if event.key == pygame.K_ESCAPE or event.key == pygame.K_n:
+            self.show_companions = False
+            self._companion_selected = None
+            return True
+
+        companions = self.companion_manager.companions
+
+        # Number keys select companion (1-5)
+        if pygame.K_1 <= event.key <= pygame.K_5:
+            idx = event.key - pygame.K_1
+            if idx < len(companions):
+                self._companion_selected = idx
+            return True
+
+        selected = getattr(self, '_companion_selected', None)
+        if selected is not None and selected < len(companions):
+            if event.key == pygame.K_d:
+                comp = companions[selected]
+                self.companion_manager.remove(comp.name)
+                self._add_notification(f"{comp.name} has been dismissed.")
+                self._companion_selected = None
+                if not self.companion_manager.companions:
+                    self.show_companions = False
+                return True
+
+        return True
+
+    def _draw_companion_panel(self, surface):
+        """Draw companion management panel overlay."""
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 140))
+        surface.blit(overlay, (0, 0))
+
+        companions = self.companion_manager.companions
+        max_comp = self.player_character.max_companions if self.player_character else 0
+
+        panel_w, panel_h = 520, 440
+        panel_x = SCREEN_WIDTH // 2 - panel_w // 2
+        panel_y = 80
+        pygame.draw.rect(surface, (30, 30, 40), (panel_x, panel_y, panel_w, panel_h))
+        pygame.draw.rect(surface, GOLD, (panel_x, panel_y, panel_w, panel_h), 2)
+
+        font = get_font(28)
+        small = get_font(20)
+        tiny = get_font(16)
+
+        title = font.render(f"Companions ({len(companions)}/{max_comp})", True, GOLD)
+        surface.blit(title, (panel_x + panel_w // 2 - title.get_width() // 2, panel_y + 10))
+
+        y = panel_y + 50
+        if not companions:
+            t = small.render("No companions in your party.", True, (150, 150, 150))
+            surface.blit(t, (panel_x + 20, y))
+            y += 30
+            if max_comp == 0:
+                hint = tiny.render("Reach level 5 to unlock companion slots.", True, (120, 120, 120))
+            else:
+                hint = tiny.render("Visit a tavern [T] near a settlement to recruit.", True, (120, 120, 120))
+            surface.blit(hint, (panel_x + 20, y))
+        else:
+            selected = getattr(self, '_companion_selected', None)
+            for i, c in enumerate(companions):
+                is_selected = (i == selected)
+                bg = (50, 50, 70) if is_selected else (35, 35, 50)
+                row_rect = (panel_x + 10, y, panel_w - 20, 58)
+                pygame.draw.rect(surface, bg, row_rect)
+                if is_selected:
+                    pygame.draw.rect(surface, GOLD, row_rect, 1)
+
+                # Name and basic info
+                name_text = small.render(
+                    f"[{i+1}] {c.name}  Lv{c.level} {c.race.capitalize()} {c.companion_class.capitalize()}",
+                    True, WHITE)
+                surface.blit(name_text, (panel_x + 15, y + 4))
+
+                # Personality and status
+                status = "Active" if c.alive else f"Captured ({c.capture_timer}d)"
+                detail = tiny.render(
+                    f"    {c.personality.capitalize()} | {status}",
+                    True, (160, 160, 160))
+                surface.blit(detail, (panel_x + 15, y + 26))
+
+                # Loyalty bar
+                bar_x = panel_x + panel_w - 130
+                bar_y = y + 8
+                bar_w = 100
+                bar_h = 12
+                pygame.draw.rect(surface, (60, 60, 60), (bar_x, bar_y, bar_w, bar_h))
+                loyalty_w = int(bar_w * c.loyalty / 100)
+                loyalty_color = (80, 200, 80) if c.loyalty >= 50 else (200, 200, 50) if c.loyalty >= 25 else (200, 60, 60)
+                pygame.draw.rect(surface, loyalty_color, (bar_x, bar_y, loyalty_w, bar_h))
+                pygame.draw.rect(surface, WHITE, (bar_x, bar_y, bar_w, bar_h), 1)
+                loy_text = tiny.render(f"{c.loyalty}", True, WHITE)
+                surface.blit(loy_text, (bar_x + bar_w + 5, bar_y - 2))
+
+                y += 62
+
+            # Detail for selected companion
+            if selected is not None and selected < len(companions):
+                y += 5
+                pygame.draw.line(surface, (80, 80, 100), (panel_x + 10, y), (panel_x + panel_w - 10, y))
+                y += 8
+                c = companions[selected]
+                detail_text = small.render(
+                    f"[D] Dismiss {c.name}", True, (255, 180, 100))
+                surface.blit(detail_text, (panel_x + 15, y))
+
+        footer = tiny.render(
+            "[1-5] Select  |  [D] Dismiss  |  [N/ESC] Close",
+            True, (150, 150, 150))
+        surface.blit(footer, (panel_x + panel_w // 2 - footer.get_width() // 2,
+                              panel_y + panel_h - 25))
+
+    # ------------------------------------------------------------------
+    # Tavern panel UI
+    # ------------------------------------------------------------------
+
+    def _handle_tavern_event(self, event):
+        """Handle input on the tavern companion recruitment panel."""
+        if event.type != pygame.KEYDOWN:
+            return True
+        if event.key == pygame.K_ESCAPE or event.key == pygame.K_t:
+            self.show_tavern = False
+            return True
+
+        tavern = self._tavern_companions
+        if not tavern:
+            return True
+
+        # Number keys recruit companion (1-3)
+        if pygame.K_1 <= event.key <= pygame.K_3:
+            idx = event.key - pygame.K_1
+            if idx < len(tavern):
+                max_comp = self.player_character.max_companions if self.player_character else 0
+                current = len(self.companion_manager.companions)
+                if current >= max_comp:
+                    self._add_notification(f"No companion slots available ({current}/{max_comp}). Dismiss one first.")
+                    return True
+
+                comp = tavern[idx]
+                # Recruitment cost based on level
+                cost = comp.level * 50
+                if self.player_army.gold < cost:
+                    self._add_notification(f"Not enough gold to recruit {comp.name} ({cost}g needed).")
+                    return True
+
+                self.player_army.gold -= cost
+                self.companion_manager.add(comp)
+                self._tavern_companions.pop(idx)
+                self._add_notification(f"{comp.name} has joined your party! (-{cost}g)")
+                if not self._tavern_companions:
+                    self.show_tavern = False
+                return True
+
+        return True
+
+    def _draw_tavern_panel(self, surface):
+        """Draw tavern companion recruitment panel overlay."""
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 140))
+        surface.blit(overlay, (0, 0))
+
+        tavern = self._tavern_companions
+        settlement_name = self._tavern_settlement.name if self._tavern_settlement else "Unknown"
+        max_comp = self.player_character.max_companions if self.player_character else 0
+        current = len(self.companion_manager.companions)
+
+        panel_w, panel_h = 540, 420
+        panel_x = SCREEN_WIDTH // 2 - panel_w // 2
+        panel_y = 80
+        pygame.draw.rect(surface, (30, 30, 40), (panel_x, panel_y, panel_w, panel_h))
+        pygame.draw.rect(surface, GOLD, (panel_x, panel_y, panel_w, panel_h), 2)
+
+        font = get_font(28)
+        small = get_font(20)
+        tiny = get_font(16)
+
+        title = font.render(f"Tavern - {settlement_name}", True, GOLD)
+        surface.blit(title, (panel_x + panel_w // 2 - title.get_width() // 2, panel_y + 10))
+
+        # Companion slot info
+        slots_color = (80, 200, 80) if current < max_comp else (200, 60, 60)
+        slots_text = small.render(f"Companion Slots: {current}/{max_comp}", True, slots_color)
+        surface.blit(slots_text, (panel_x + panel_w // 2 - slots_text.get_width() // 2, panel_y + 42))
+
+        gold_text = tiny.render(f"Gold: {self.player_army.gold}", True, GOLD)
+        surface.blit(gold_text, (panel_x + panel_w - 120, panel_y + 46))
+
+        y = panel_y + 72
+        if not tavern:
+            t = small.render("No companions available at this tavern.", True, (150, 150, 150))
+            surface.blit(t, (panel_x + 20, y))
+        else:
+            for i, c in enumerate(tavern):
+                bg = (35, 35, 50)
+                row_rect = (panel_x + 10, y, panel_w - 20, 72)
+                pygame.draw.rect(surface, bg, row_rect)
+                pygame.draw.rect(surface, (60, 60, 80), row_rect, 1)
+
+                cost = c.level * 50
+                can_afford = self.player_army.gold >= cost
+                has_slot = current < max_comp
+
+                # Name and class
+                name_color = WHITE if (can_afford and has_slot) else (120, 120, 120)
+                name_text = small.render(
+                    f"[{i+1}] {c.name}  -  Lv{c.level} {c.race.capitalize()} {c.companion_class.capitalize()}",
+                    True, name_color)
+                surface.blit(name_text, (panel_x + 15, y + 6))
+
+                # Personality and loyalty
+                detail = tiny.render(
+                    f"    Personality: {c.personality.capitalize()}  |  Loyalty: {c.loyalty}",
+                    True, (160, 160, 160))
+                surface.blit(detail, (panel_x + 15, y + 28))
+
+                # Cost
+                cost_color = GOLD if can_afford else (200, 60, 60)
+                cost_text = small.render(f"{cost}g", True, cost_color)
+                surface.blit(cost_text, (panel_x + panel_w - 70, y + 6))
+
+                # Status hint
+                if not has_slot:
+                    hint = tiny.render("No slots", True, (200, 60, 60))
+                    surface.blit(hint, (panel_x + panel_w - 80, y + 50))
+                elif not can_afford:
+                    hint = tiny.render("Can't afford", True, (200, 60, 60))
+                    surface.blit(hint, (panel_x + panel_w - 100, y + 50))
+
+                y += 76
+
+        footer = tiny.render(
+            "[1-3] Recruit  |  [T/ESC] Close",
             True, (150, 150, 150))
         surface.blit(footer, (panel_x + panel_w // 2 - footer.get_width() // 2,
                               panel_y + panel_h - 25))

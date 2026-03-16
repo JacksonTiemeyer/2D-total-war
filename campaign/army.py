@@ -153,7 +153,7 @@ class Army:
         self.x += nx * self.speed
         self.y += ny * self.speed
 
-    def get_battle_data(self):
+    def get_battle_data(self, player_class=None):
         """Convert to battle deployment format.
 
         Uses current_count instead of max squad_size for understrength squads.
@@ -171,14 +171,17 @@ class Army:
                     "exhaustion_mult": rank[5],
                 }
                 squad_list.append((sq.unit_stats, sq.current_count, vet_data))
+        gen_data = {
+            "name": self.general_name,
+            "stats": self.general_stats,
+            "xp": self.general_xp,
+            "level": self.general_level,
+        }
+        if player_class:
+            gen_data["player_class"] = player_class
         return {
             "squads": squad_list,
-            "general": {
-                "name": self.general_name,
-                "stats": self.general_stats,
-                "xp": self.general_xp,
-                "level": self.general_level,
-            },
+            "general": gen_data,
         }
 
     def apply_battle_results(self, battle_scene):

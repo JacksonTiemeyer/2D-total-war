@@ -536,12 +536,16 @@ class Squad:
                 self._handle_brace_impact()
             else:
                 # Apply flank/rear charge morale shock
+                # Iron Discipline: immune to flanking morale penalty
                 flank_mult = self.target_squad.compute_flank_multiplier(self)
+                iron_disc = getattr(self.target_squad, '_iron_discipline', False)
                 if flank_mult >= REAR_DAMAGE_BONUS:
-                    self.target_squad.apply_morale_modifier(-REAR_CHARGE_MORALE_SHOCK)
+                    if not iron_disc:
+                        self.target_squad.apply_morale_modifier(-REAR_CHARGE_MORALE_SHOCK)
                     self.target_squad.being_rear_charged = True
                 elif flank_mult >= FLANK_DAMAGE_BONUS:
-                    self.target_squad.apply_morale_modifier(-FLANK_MORALE_SHOCK)
+                    if not iron_disc:
+                        self.target_squad.apply_morale_modifier(-FLANK_MORALE_SHOCK)
                     self.target_squad.being_flanked = True
 
             self.state = SquadState.FIGHTING
@@ -608,6 +612,9 @@ class Squad:
             if best:
                 if best_dist <= MELEE_RANGE:
                     vet_flank = flank_mult * self.vet_atk_mult
+                    # Enchant Weapons: +25% melee damage
+                    if getattr(self, '_enchant_weapons', False):
+                        vet_flank *= 1.25
                     vet_def = def_mult * self.target_squad.vet_def_mult
                     dmg = s.attack(best, is_charging=is_charge,
                                    flank_mult=vet_flank,
