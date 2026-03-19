@@ -1496,6 +1496,28 @@ class BattleScene:
                              (int(sx1), int(sy1)), (int(sx2), int(sy2)), 2)
             pygame.draw.circle(target_surf, color, (int(sx2), int(sy2)), 4)
 
+        # General targeting indicator (move waypoint or attack target).
+        if self.selected_general and self.selected_general.alive:
+            g = self.selected_general
+            gsx, gsy = self.camera.world_to_screen(g.x, g.y)
+
+            # Attack target -> squad center marker
+            if getattr(g, "target_squad", None) and not g.target_squad.is_destroyed:
+                tx, ty = g.target_squad.center
+                tsx, tsy = self.camera.world_to_screen(tx, ty)
+                gcolor = (100, 200, 255, 120) if g.team == 0 else (255, 80, 80, 90)
+                pygame.draw.line(target_surf, gcolor, (int(gsx), int(gsy)), (int(tsx), int(tsy)), 2)
+                pygame.draw.circle(target_surf, gcolor, (int(tsx), int(tsy)), 6, 0)
+            # Move order -> waypoint marker
+            else:
+                dx = g.target_x - g.x
+                dy = g.target_y - g.y
+                if dx * dx + dy * dy > 25:  # ~5 units threshold
+                    tsx, tsy = self.camera.world_to_screen(g.target_x, g.target_y)
+                    gcolor = (200, 200, 100, 95)
+                    pygame.draw.line(target_surf, gcolor, (int(gsx), int(gsy)), (int(tsx), int(tsy)), 2)
+                    pygame.draw.circle(target_surf, gcolor, (int(tsx), int(tsy)), 6, 0)
+
         surface.blit(target_surf, (0, 0))
 
     def _draw_weather(self, surface):

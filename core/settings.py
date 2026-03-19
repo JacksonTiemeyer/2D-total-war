@@ -111,6 +111,15 @@ MELEE_RANGE = 15
 RANGED_MIN_RANGE = 50
 CHARGE_BONUS_DISTANCE = 80
 CHARGE_BONUS_MULTIPLIER = 1.5
+
+# Balance tuning: make battles last longer (slower, less burst)
+# and reduce the charge "one-shot" feel.
+CHARGE_WINDOW_FRAMES = 14                  # how long squads stay in "charging" damage window
+CHARGE_DAMAGE_BONUS_SCALE = 0.45          # scale for (charge_bonus * mass) added during charge window
+CHARGE_DAMAGE_BONUS_CAP_MULT = 1.0        # cap: max extra charge bonus is base_weapon_dmg * this
+MELEE_ATTACK_COOLDOWN_FRAMES = 45         # base melee attack cadence (in frames)
+INCOMING_DAMAGE_MULT = 0.8               # global incoming damage multiplier
+
 MORALE_BREAK_THRESHOLD = 25
 MORALE_ROUT_THRESHOLD = 10
 MORALE_RECOVERY_RATE = 0.05

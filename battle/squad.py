@@ -24,6 +24,7 @@ from core.settings import (
     RUN_SPEED_MULT_INFANTRY, RUN_SPEED_MULT_CAVALRY,
     COLLISION_ENGAGE_RADIUS,
     HILL_CHARGE_DOWNHILL_BONUS, HILL_SPEED_UPHILL_PENALTY,
+    CHARGE_WINDOW_FRAMES,
 )
 from core.utils import distance, angle_between, normalize, clamp, get_font
 from battle.soldier import Soldier
@@ -100,7 +101,9 @@ class Squad:
 
         # Stances
         self.defensive_stance = False    # hold position, engage nearby only
-        self.skirmish_stance = False     # ranged: retreat from approaching enemies
+        # Ranged units default to skirmish behavior (auto-kite) to avoid
+        # them getting stuck in melee.
+        self.skirmish_stance = self.is_ranged
         self.defensive_anchor_x = x     # position to return to in defensive stance
         self.defensive_anchor_y = y
 
@@ -353,7 +356,9 @@ class Squad:
         self.target_x = tx
         self.target_y = ty
         dist = distance(self.x, self.y, tx, ty)
-        if self.is_ranged and dist <= self.unit_stats.range_distance:
+        # Ranged units should always try to fight at range (kite),
+        # not behave like melee while the target is out of range.
+        if self.is_ranged:
             self.state = SquadState.FIRING
         else:
             self.state = SquadState.CHARGING
@@ -553,7 +558,9 @@ class Squad:
                     self.target_squad.being_flanked = True
 
             self.state = SquadState.FIGHTING
-            self.charge_timer = 30  # bonus frames
+            # Reduced charging damage window so melee clashes don't
+            # instantly delete armies.
+            self.charge_timer = CHARGE_WINDOW_FRAMES  # bonus frames
             return
 
         self.target_x = tx
@@ -663,8 +670,22 @@ class Squad:
                 self.target_y = self.y + ny * approach_dist
             self._do_movement()
             return
+        # If the enemy is too close, kite backwards instead of switching
+        # into melee (this prevents ranged units from charging into contact).
         if dist < MELEE_RANGE * 3:
-            self.state = SquadState.FIGHTING
+            safe_dist = max_range * 0.85
+            # Vector from enemy -> us (direction to retreat).
+            dx, dy = self.x - tx, self.y - ty
+            d = max(1, (dx * dx + dy * dy) ** 0.5)
+            retreat_x = tx + (dx / d) * safe_dist
+            retreat_y = ty + (dy / d) * safe_dist
+            from core.settings import BATTLE_MAP_WIDTH, BATTLE_MAP_HEIGHT
+            retreat_x = max(50, min(BATTLE_MAP_WIDTH - 50, retreat_x))
+            retreat_y = max(50, min(BATTLE_MAP_HEIGHT - 50, retreat_y))
+            self.movement_mode = MOVE_MODE_RUN
+            self.target_x = retreat_x
+            self.target_y = retreat_y
+            self._do_movement(speed_mult=1.2)
             return
         self.facing_angle = angle_between(self.x, self.y, tx, ty)
         ranged_dmg_mult = self.terrain_mods.get("ranged_damage_mult", 1.0) * self.vet_atk_mult

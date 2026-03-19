@@ -247,7 +247,9 @@ class General:
                     attack_power *= 2.0
                 if self._avatar_active:
                     attack_power *= 2.5
-                effective_armor = soldier.armor * random.uniform(0.5, 1.0)
+                # Soldier stores armor on its UnitStats (soldier.stats.armor),
+                # not as a direct attribute.
+                effective_armor = soldier.stats.armor * random.uniform(0.5, 1.0)
                 damage = max(1, attack_power * random.uniform(0.8, 1.2) - effective_armor * 0.3)
                 soldier.health -= damage
                 if soldier.health <= 0:

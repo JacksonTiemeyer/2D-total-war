@@ -4,6 +4,9 @@ import math
 import random
 from core.settings import (
     EXHAUSTION_DAMAGE_PENALTY, EXHAUSTION_COOLDOWN_PENALTY,
+    INCOMING_DAMAGE_MULT,
+    CHARGE_DAMAGE_BONUS_SCALE, CHARGE_DAMAGE_BONUS_CAP_MULT,
+    MELEE_ATTACK_COOLDOWN_FRAMES,
 )
 from core.utils import distance, angle_between, normalize
 from data.traits import (
@@ -92,10 +95,13 @@ class Soldier:
             # Non-physical damage ignores physical armor
             effective_armor = 0
 
-        damage = max(1, amount * type_mult * trait_mult - effective_armor)
+        base_damage = max(1, amount * type_mult * trait_mult - effective_armor)
 
         if self.stats.shield and random.random() < 0.2:
-            damage *= 0.5  # shield block
+            base_damage *= 0.5  # shield block
+
+        # Global combat tuning: make battles last longer.
+        damage = max(1, base_damage * INCOMING_DAMAGE_MULT)
 
         self.health -= damage
         self.hit_flash_timer = 6  # flash white for 6 frames
@@ -112,10 +118,17 @@ class Soldier:
         if self.attack_cooldown > 0:
             return 0
 
-        # Base damage from weapon strength
+        # Base damage from weapon strength (exhaustion already applied).
         weapon_dmg = self.effective_weapon_strength()
+        base_weapon_dmg = weapon_dmg
+
+        # Charge damage: reduce the burst by scaling and capping
+        # (prevents cavalry/monsters from deleting units on contact).
         if is_charging:
-            weapon_dmg += self.stats.charge_bonus * self.stats.mass
+            charge_bonus_power = (self.stats.charge_bonus * self.stats.mass)
+            charge_bonus_power *= CHARGE_DAMAGE_BONUS_SCALE
+            charge_bonus_cap = base_weapon_dmg * CHARGE_DAMAGE_BONUS_CAP_MULT
+            weapon_dmg += min(charge_bonus_power, charge_bonus_cap)
 
         # Attack skill vs defense skill determines hit quality
         attack_roll = self.stats.melee_attack * random.uniform(0.7, 1.3)
@@ -142,7 +155,7 @@ class Soldier:
                 target_soldier.poison_timer = POISON_DOT_DURATION
                 target_soldier.poison_dps = POISON_DOT_DAMAGE / 60.0  # per frame
 
-        self.attack_cooldown = int(self.effective_cooldown(30) * cooldown_mult)
+        self.attack_cooldown = int(self.effective_cooldown(MELEE_ATTACK_COOLDOWN_FRAMES) * cooldown_mult)
         return actual
 
     def ranged_attack(self, target_soldier, accuracy_mult=1.0, damage_mult=1.0):

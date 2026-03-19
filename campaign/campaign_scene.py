@@ -446,6 +446,12 @@ class CampaignScene:
             # B1: Real-time controls
             if event.key == pygame.K_SPACE:
                 self.paused = not self.paused
+                if self.paused:
+                    # Cancel any in-progress move so the army doesn't
+                    # continue (or auto-resume) after unpausing.
+                    self.player_army.moving = False
+                    self.player_army.target_x = self.player_army.x
+                    self.player_army.target_y = self.player_army.y
                 self._add_notification("PAUSED" if self.paused else "Resumed")
             elif event.key == pygame.K_1:
                 self.campaign_speed = CAMPAIGN_SPEED_1X
@@ -477,6 +483,10 @@ class CampaignScene:
                 if self.general_manager.player_prisoners:
                     self.show_prisoners = True
                     self.paused = True
+                    # Stop movement while prisoner overlay is active.
+                    self.player_army.moving = False
+                    self.player_army.target_x = self.player_army.x
+                    self.player_army.target_y = self.player_army.y
                 else:
                     self._add_notification("No prisoners held.")
             elif event.key == pygame.K_n:
@@ -569,6 +579,9 @@ class CampaignScene:
             self._try_open_recruitment()
 
     def _handle_right_click(self, pos):
+        # Pause input lock: prevent player movement/army commands while paused.
+        if self.paused:
+            return
         # D6: Can't move while captured
         if self.general_manager.player_capture.is_captured:
             self._add_notification("Cannot move while captured!")
@@ -1184,8 +1197,9 @@ class CampaignScene:
             if season == SEASON_SUMMER and army.team == 3:  # Desert Raiders
                 army.speed = base_speed * SEASON_SUMMER_DESERT_SPEED_BONUS
 
-        # Always update player movement (even when paused for responsiveness)
-        self.player_army.update()
+        # Pause input lock: do not advance player movement while paused.
+        if not self.paused:
+            self.player_army.update()
 
         # Tick save notification
         if hasattr(self, '_save_notification_timer') and self._save_notification_timer > 0:
@@ -1215,8 +1229,8 @@ class CampaignScene:
                     self.day_ticks = 0
                     self._process_day()
 
-        # Fog needs update when player moves
-        if self.player_army.moving:
+        # Fog needs update when player moves (and we're not paused).
+        if not self.paused and self.player_army.moving:
             self._fog_needs_update = True
 
         # Check for collisions with enemy armies -> trigger battle
