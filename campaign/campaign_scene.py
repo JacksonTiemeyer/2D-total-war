@@ -94,7 +94,10 @@ class CampaignScene:
         self.show_diplomacy = False
         self.show_quest_log = False
         self.show_army_panel = False
+        self._diplomacy_scroll = 0  # scroll offset for diplomacy panel
         self.pending_battle = None  # (player_army, enemy_army, terrain_type) tuple
+        self._siege_settlement = None  # settlement being besieged
+        self._selected_army = None     # clicked NPC army for info display
 
         # B9/C3: Settlement interaction
         self.settlement_interaction = None  # SettlementInteraction instance or None
@@ -515,9 +518,10 @@ class CampaignScene:
             self._handle_bottom_bar_click(pos)
             return
 
-        # Deselect
+        # Deselect all
         self.selected_settlement = None
         self.player_army.selected = False
+        self._selected_army = None
 
         # Check settlements
         for s in self.settlements:
@@ -525,6 +529,16 @@ class CampaignScene:
             if distance(wx, wy, s.x, s.y) < 30:
                 s.selected = True
                 self.selected_settlement = s
+                return
+
+        # Check clicking on enemy/NPC armies
+        for army in self.armies:
+            if army.is_player:
+                continue
+            if not self._is_visible(army.x, army.y):
+                continue
+            if distance(wx, wy, army.x, army.y) < 25:
+                self._selected_army = army
                 return
 
         # Check player army
@@ -563,12 +577,18 @@ class CampaignScene:
         self.player_army.give_move_order(wx, wy)
 
     def _try_enter_settlement(self):
-        """B9: Try to enter a nearby settlement for interaction."""
+        """B9: Try to enter a nearby settlement for interaction, or siege if hostile."""
         for s in self.settlements:
             if distance(self.player_army.x, self.player_army.y, s.x, s.y) < 60:
-                # Can't enter hostile settlements
+                # Hostile settlement -> trigger siege battle
                 if s.owner is not None and self.diplomacy.are_at_war(0, s.owner):
-                    self._add_notification(f"Cannot enter {s.name} - at war!")
+                    terrain_type = self._get_terrain_at_position(s.x, s.y)
+                    # Create a garrison army for the siege
+                    garrison = self._create_garrison_army(s)
+                    self.pending_battle = (self.player_army, garrison, terrain_type)
+                    self._siege_settlement = s  # track which settlement we're sieging
+                    self.paused = True
+                    self._add_notification(f"Laying siege to {s.name}!")
                     return
                 self.settlement_interaction = SettlementInteraction(
                     s, self.player_army, self.diplomacy, self.factions,
@@ -579,6 +599,17 @@ class CampaignScene:
                 self._add_notification(f"Entered {s.name}")
                 return
         self._add_notification("No settlement nearby. Move closer to enter.")
+
+    def _create_garrison_army(self, settlement):
+        """Create a temporary garrison army for siege battles."""
+        garrison_size = settlement.garrison_strength
+        team = settlement.owner if settlement.owner is not None else 1
+        # Build a garrison army based on the settlement's faction
+        garrison = create_enemy_army(
+            f"{settlement.name} Garrison", team,
+            settlement.x, settlement.y,
+            difficulty=max(1, garrison_size // 40))
+        return garrison
 
     def _process_settlement_action(self, action):
         """Handle actions returned from SettlementInteraction."""
@@ -625,9 +656,20 @@ class CampaignScene:
         self.player_army.general_stats = GENERAL_ROSTER[idx]
 
     def _handle_diplomacy_event(self, event):
+        if event.type == pygame.MOUSEWHEEL:
+            self._diplomacy_scroll -= event.y * 30
+            self._diplomacy_scroll = max(0, self._diplomacy_scroll)
+            return None
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_ESCAPE:
                 self.show_diplomacy = False
+                self._diplomacy_scroll = 0
+                return None
+            if event.key == pygame.K_UP:
+                self._diplomacy_scroll = max(0, self._diplomacy_scroll - 30)
+                return None
+            if event.key == pygame.K_DOWN:
+                self._diplomacy_scroll += 30
                 return None
             if pygame.K_1 <= event.key <= pygame.K_9:
                 idx = event.key - pygame.K_1
@@ -944,7 +986,8 @@ class CampaignScene:
 
         # B3: Quest updates
         self.quest_manager.generate_bounty_board(
-            self.settlements, self.factions, self.day)
+            self.settlements, self.factions, self.day,
+            armies=self.armies, roaming_manager=self.roaming_manager, scene=self)
         completed, failed = self.quest_manager.update(
             self.player_army, self.day, self.diplomacy)
         for q in completed:
@@ -1243,6 +1286,9 @@ class CampaignScene:
                     p2 = self.camera.world_to_screen(s2.x, s2.y)
                     pygame.draw.line(surface, (150, 135, 100), p1, p2, max(1, self.camera.scale(2)))
 
+        # Roads/trade routes between faction settlements
+        self._draw_roads(surface)
+
         # Settlements
         for s in self.settlements:
             s.draw(surface, self.camera)
@@ -1258,6 +1304,14 @@ class CampaignScene:
                 army.draw(surface, self.camera)
             elif self._is_visible(army.x, army.y):
                 army.draw(surface, self.camera)
+                # Draw selection ring for selected NPC army
+                if getattr(self, '_selected_army', None) is army:
+                    sx, sy = self.camera.world_to_screen(army.x, army.y)
+                    r = self.camera.scale(18)
+                    pygame.draw.circle(surface, GOLD, (int(sx), int(sy)), int(r), 2)
+
+        # Draw interaction indicators near player army
+        self._draw_interaction_indicators(surface)
 
         # B13: Fog of war overlay
         self._draw_fog_of_war(surface)
@@ -1405,6 +1459,85 @@ class CampaignScene:
             font = get_font(max(12, self.camera.scale(13)))
             text = font.render(stronghold.name, True, (220, 180, 180))
             surface.blit(text, (sx - text.get_width() // 2, sy + r + 2))
+
+    def _draw_roads(self, surface):
+        """Draw roads connecting settlements of the same faction."""
+        # Build roads: connect each settlement to its nearest 2-3 same-faction neighbors
+        if not hasattr(self, '_road_cache') or self._territory_needs_update:
+            self._road_cache = []
+            # Group settlements by owner
+            by_owner = {}
+            for s in self.settlements:
+                if s.owner is not None:
+                    by_owner.setdefault(s.owner, []).append(s)
+            # Also connect nearby neutral settlements to nearest faction settlement
+            for owner, slist in by_owner.items():
+                if len(slist) < 2:
+                    continue
+                for s in slist:
+                    # Connect to 2 nearest same-faction settlements
+                    others = sorted(
+                        [o for o in slist if o is not s],
+                        key=lambda o: distance(s.x, s.y, o.x, o.y))
+                    for o in others[:2]:
+                        pair = tuple(sorted([id(s), id(o)]))
+                        if pair not in [tuple(sorted([id(a), id(b)])) for a, b, _ in self._road_cache]:
+                            self._road_cache.append((s, o, owner))
+
+        road_color_base = (140, 120, 80)
+        for s1, s2, owner in self._road_cache:
+            sx1, sy1 = self.camera.world_to_screen(s1.x, s1.y)
+            sx2, sy2 = self.camera.world_to_screen(s2.x, s2.y)
+            # Dashed road line with faction tint
+            team_color = TEAM_COLORS.get(owner, GREY)
+            # Blend road color with faction color
+            road_color = (
+                min(255, (road_color_base[0] + team_color[0]) // 2),
+                min(255, (road_color_base[1] + team_color[1]) // 2),
+                min(255, (road_color_base[2] + team_color[2]) // 2),
+            )
+            pygame.draw.line(surface, road_color,
+                             (int(sx1), int(sy1)), (int(sx2), int(sy2)), max(1, int(self.camera.scale(2))))
+
+    def _draw_interaction_indicators(self, surface):
+        """Draw interaction hint icons near interactable objects close to player."""
+        px, py = self.player_army.x, self.player_army.y
+        indicator_font = get_font(max(12, self.camera.scale(14)))
+
+        # Settlement interaction indicators
+        for s in self.settlements:
+            d = distance(px, py, s.x, s.y)
+            if d < 80:
+                sx, sy = self.camera.world_to_screen(s.x, s.y)
+                r = self.camera.scale(25)
+                # Pulsing ring
+                pulse = abs((pygame.time.get_ticks() % 1000) - 500) / 500.0
+                alpha = int(80 + 80 * pulse)
+                ring_surf = pygame.Surface((int(r * 2 + 4), int(r * 2 + 4)), pygame.SRCALPHA)
+                color = (255, 215, 0, alpha)
+                pygame.draw.circle(ring_surf, color, (int(r + 2), int(r + 2)), int(r), 2)
+                surface.blit(ring_surf, (int(sx - r - 2), int(sy - r - 2)))
+                # "[E]" label
+                label = indicator_font.render("[E]", True, GOLD)
+                surface.blit(label, (int(sx) - label.get_width() // 2,
+                                     int(sy) - int(r) - 16))
+
+        # NPC army interaction indicators
+        for army in self.armies:
+            if army.is_player:
+                continue
+            if not self._is_visible(army.x, army.y):
+                continue
+            d = distance(px, py, army.x, army.y)
+            if d < PERSUASION_RANGE:
+                sx, sy = self.camera.world_to_screen(army.x, army.y)
+                # Small icon indicating interaction is possible
+                indicator_font_small = get_font(max(10, self.camera.scale(11)))
+                if self._are_hostile(0, army.team):
+                    label = indicator_font_small.render("!", True, (255, 80, 80))
+                else:
+                    label = indicator_font_small.render("?", True, (100, 200, 255))
+                surface.blit(label, (int(sx) + 8, int(sy) - 16))
 
     def _draw_terrain(self, surface):
         """Draw decorative terrain features."""
@@ -1613,6 +1746,10 @@ class CampaignScene:
             self.player_army.draw_info_panel(
                 surface, SCREEN_WIDTH - 280, 50, font, small_font)
 
+        # Selected NPC army info
+        if getattr(self, '_selected_army', None) and self._selected_army in self.armies:
+            self._draw_army_info_panel(surface, font, small_font)
+
     def _draw_settlement_info(self, surface, font, small_font):
         s = self.selected_settlement
         panel_h = 160 if self._is_tournament_available(s) else 140
@@ -1653,8 +1790,63 @@ class CampaignScene:
             tourney_text = small_font.render("Tournament available!", True, (255, 215, 0))
             surface.blit(tourney_text, (x, y))
 
+    def _draw_army_info_panel(self, surface, font, small_font):
+        """Draw info panel for a selected NPC army."""
+        army = self._selected_army
+        panel_h = 140
+        panel = pygame.Surface((260, panel_h), pygame.SRCALPHA)
+        panel.fill((0, 0, 0, 190))
+        surface.blit(panel, (SCREEN_WIDTH - 270, 45))
+
+        x, y = SCREEN_WIDTH - 260, 50
+        # Army name + team color
+        team_color = TEAM_COLORS.get(army.team, GREY)
+        pygame.draw.rect(surface, team_color, (x, y, 12, 12))
+        name_text = font.render(f" {army.general_name}", True, WHITE)
+        surface.blit(name_text, (x + 16, y - 3))
+        y += 22
+
+        # Faction name
+        faction_names = {f.team: f.name for f in self.factions}
+        faction_name = faction_names.get(army.team, "Roaming")
+        faction_text = small_font.render(f"Faction: {faction_name}", True, (180, 180, 180))
+        surface.blit(faction_text, (x, y))
+        y += 18
+
+        # Army strength
+        str_text = small_font.render(f"Soldiers: {army.total_soldiers}", True, WHITE)
+        surface.blit(str_text, (x, y))
+        y += 18
+
+        # Diplomatic state
+        if army.team in ROAMING_TYPES:
+            state_str = "HOSTILE"
+            state_color = (255, 80, 80)
+        else:
+            state = self.diplomacy.get_state(0, army.team)
+            state_str = state.upper()
+            if state == DiplomacyState.WAR:
+                state_color = (255, 80, 80)
+            elif state in (DiplomacyState.FRIENDLY,):
+                state_color = (80, 200, 80)
+            elif state == DiplomacyState.ALLIED:
+                state_color = (80, 255, 80)
+            else:
+                state_color = (200, 200, 100)
+        state_text = small_font.render(f"Relations: {state_str}", True, state_color)
+        surface.blit(state_text, (x, y))
+        y += 18
+
+        # Interaction hint
+        d = distance(self.player_army.x, self.player_army.y, army.x, army.y)
+        if d < PERSUASION_RANGE:
+            hint = small_font.render("[P] Persuade  [E] Interact", True, GOLD)
+        else:
+            hint = small_font.render("Move closer to interact", True, (150, 150, 150))
+        surface.blit(hint, (x, y))
+
     def _draw_diplomacy(self, surface):
-        """Draw diplomacy overview panel."""
+        """Draw scrollable diplomacy overview panel."""
         overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
         overlay.fill((0, 0, 0, 140))
         surface.blit(overlay, (0, 0))
@@ -1672,9 +1864,13 @@ class CampaignScene:
         title = font.render("Diplomacy & Relations", True, GOLD)
         surface.blit(title, (panel_x + panel_w // 2 - title.get_width() // 2, panel_y + 10))
 
-        y = panel_y + 50
-        non_player = [f for f in self.factions if not f.is_player]
+        # Content area with clipping for scrolling
+        content_top = panel_y + 45
+        content_bottom = panel_y + panel_h - 30
+        content_h = content_bottom - content_top
 
+        # Render all content to a temporary surface to measure total height
+        non_player = [f for f in self.factions if not f.is_player]
         state_colors = {
             DiplomacyState.WAR: (220, 50, 50),
             DiplomacyState.HOSTILE: (200, 130, 50),
@@ -1683,84 +1879,113 @@ class CampaignScene:
             DiplomacyState.ALLIED: (50, 150, 255),
         }
 
+        # Estimate total content height
+        total_h = 0
+        for i, faction in enumerate(non_player):
+            total_h += 20 + 18 + 16 + 10  # base per faction
+            faction_armies = [a for a in self.armies if a.team == faction.team]
+            total_h += min(len(faction_armies), 2) * 14
+        total_h += 30  # footer status
+
+        # Clamp scroll
+        max_scroll = max(0, total_h - content_h)
+        self._diplomacy_scroll = min(self._diplomacy_scroll, max_scroll)
+
+        # Create clipped content surface
+        content_surf = pygame.Surface((panel_w - 4, content_h), pygame.SRCALPHA)
+        content_surf.fill((0, 0, 0, 0))
+
+        y = -self._diplomacy_scroll  # start offset by scroll
+
         for i, faction in enumerate(non_player):
             rel = self.diplomacy.get_relation(0, faction.team)
             state = self.diplomacy.get_state(0, faction.team)
             color = state_colors.get(state, WHITE)
-
             team_color = TEAM_COLORS.get(faction.team, GREY)
 
             # Color swatch
-            pygame.draw.rect(surface, team_color, (panel_x + 15, y + 2, 12, 12))
-
-            name_text = small.render(f"[{i+1}] {faction.name}", True, team_color)
-            surface.blit(name_text, (panel_x + 32, y))
-
-            state_text = small.render(f"{state.upper()} ({rel:+d})", True, color)
-            surface.blit(state_text, (panel_x + 250, y))
-
-            pers = tiny.render(f"({faction.personality})", True, (120, 120, 120))
-            surface.blit(pers, (panel_x + 400, y + 2))
+            if 0 <= y < content_h:
+                pygame.draw.rect(content_surf, team_color, (13, y + 2, 12, 12))
+                name_text = small.render(f"[{i+1}] {faction.name}", True, team_color)
+                content_surf.blit(name_text, (30, y))
+                state_text = small.render(f"{state.upper()} ({rel:+d})", True, color)
+                content_surf.blit(state_text, (248, y))
+                pers = tiny.render(f"({faction.personality})", True, (120, 120, 120))
+                content_surf.blit(pers, (398, y + 2))
 
             y += 20
 
-            if state == DiplomacyState.WAR:
-                hint = tiny.render(f"  Press [{i+1}] to propose peace", True, (150, 150, 150))
-            elif state == DiplomacyState.FRIENDLY:
-                if self.player_faction is None and rel >= FACTION_JOIN_THRESHOLD:
-                    hint = tiny.render(f"  Press [{i+1}] to JOIN this faction!", True, (100, 255, 100))
+            if 0 <= y < content_h:
+                if state == DiplomacyState.WAR:
+                    hint = tiny.render(f"  Press [{i+1}] to propose peace", True, (150, 150, 150))
+                elif state == DiplomacyState.FRIENDLY:
+                    if self.player_faction is None and rel >= FACTION_JOIN_THRESHOLD:
+                        hint = tiny.render(f"  Press [{i+1}] to JOIN this faction!", True, (100, 255, 100))
+                    else:
+                        hint = tiny.render(f"  Press [{i+1}] to propose alliance", True, (150, 150, 150))
+                elif state in (DiplomacyState.NEUTRAL, DiplomacyState.HOSTILE):
+                    hint = tiny.render(f"  Press [{i+1}] to declare war", True, (150, 150, 150))
                 else:
-                    hint = tiny.render(f"  Press [{i+1}] to propose alliance", True, (150, 150, 150))
-            elif state in (DiplomacyState.NEUTRAL, DiplomacyState.HOSTILE):
-                hint = tiny.render(f"  Press [{i+1}] to declare war", True, (150, 150, 150))
-            else:
-                hint = tiny.render(f"  Allied", True, (100, 200, 255))
-            surface.blit(hint, (panel_x + 30, y))
+                    hint = tiny.render(f"  Allied", True, (100, 200, 255))
+                content_surf.blit(hint, (28, y))
             y += 18
 
             owned = sum(1 for s in self.settlements if s.owner == faction.team)
             faction_armies = [a for a in self.armies if a.team == faction.team]
-            info = tiny.render(
-                f"  Settlements: {owned}  |  Armies: {len(faction_armies)}",
-                True, (140, 140, 140))
-            surface.blit(info, (panel_x + 30, y))
+            if 0 <= y < content_h:
+                info = tiny.render(
+                    f"  Settlements: {owned}  |  Armies: {len(faction_armies)}",
+                    True, (140, 140, 140))
+                content_surf.blit(info, (28, y))
             y += 16
 
             # B12: Show individual general opinions
-            for army in faction_armies[:2]:  # show up to 2 generals
-                gen_opinion = self.diplomacy.get_general_opinion(army.general_name)
-                gen_state = self.diplomacy.get_general_state(army.general_name)
-                ai = self.ai_controllers.get(id(army))
-                personality_str = f" ({ai.personality})" if ai else ""
-                op_color = (100, 200, 100) if gen_opinion > 0 else (200, 100, 100) if gen_opinion < 0 else (150, 150, 150)
-                gt = tiny.render(
-                    f"    {army.general_name}{personality_str}: {gen_opinion:+d}",
-                    True, op_color)
-                surface.blit(gt, (panel_x + 30, y))
+            for army in faction_armies[:2]:
+                if 0 <= y < content_h:
+                    gen_opinion = self.diplomacy.get_general_opinion(army.general_name)
+                    ai = self.ai_controllers.get(id(army))
+                    personality_str = f" ({ai.personality})" if ai else ""
+                    op_color = (100, 200, 100) if gen_opinion > 0 else (200, 100, 100) if gen_opinion < 0 else (150, 150, 150)
+                    gt = tiny.render(
+                        f"    {army.general_name}{personality_str}: {gen_opinion:+d}",
+                        True, op_color)
+                    content_surf.blit(gt, (28, y))
                 y += 14
             y += 10
 
         # B2/B7: Show current faction status
-        if self.player_faction is not None:
-            if self.player_faction == 0:
-                player_settlements = sum(1 for s in self.settlements if s.owner == 0)
-                status = small.render(
-                    f"Your Faction  |  Settlements: {player_settlements}  [L] Dissolve",
-                    True, (100, 255, 200))
+        if 0 <= y < content_h:
+            if self.player_faction is not None:
+                if self.player_faction == 0:
+                    player_settlements = sum(1 for s in self.settlements if s.owner == 0)
+                    status = small.render(
+                        f"Your Faction | Settlements: {player_settlements} [L] Dissolve",
+                        True, (100, 255, 200))
+                else:
+                    f_obj = FACTION_BY_TEAM.get(self.player_faction)
+                    f_name = f_obj.name if f_obj else "Unknown"
+                    status = small.render(f"Vassal of {f_name}  [L] Leave Faction", True, (100, 200, 255))
+                content_surf.blit(status, (13, y + 5))
             else:
-                f_obj = FACTION_BY_TEAM.get(self.player_faction)
-                f_name = f_obj.name if f_obj else "Unknown"
-                status = small.render(f"Vassal of {f_name}  [L] Leave Faction", True, (100, 200, 255))
-            surface.blit(status, (panel_x + 15, y + 5))
-        else:
-            own_settlements = sum(1 for s in self.settlements if s.owner == 0)
-            if own_settlements > 0:
-                status = small.render("You own settlements! Capture a neutral one to found a faction.", True, (100, 255, 100))
-            else:
-                status = small.render("You are Independent. Reach +50 rep to join a faction, or capture a settlement.", True, (220, 160, 60))
-            surface.blit(status, (panel_x + 15, y + 5))
+                own_settlements = sum(1 for s in self.settlements if s.owner == 0)
+                if own_settlements > 0:
+                    status = small.render("Own settlements! Capture neutral to found faction.", True, (100, 255, 100))
+                else:
+                    status = small.render("Independent. +50 rep to join, or capture settlement.", True, (220, 160, 60))
+                content_surf.blit(status, (13, y + 5))
 
-        footer = tiny.render("[ESC] Close  |  Press number to interact", True, (150, 150, 150))
+        # Blit the scrolled content
+        surface.blit(content_surf, (panel_x + 2, content_top))
+
+        # Scrollbar
+        if max_scroll > 0:
+            scrollbar_h = max(20, int(content_h * content_h / total_h))
+            scrollbar_y = content_top + int((content_h - scrollbar_h) * self._diplomacy_scroll / max_scroll)
+            pygame.draw.rect(surface, (80, 80, 100),
+                             (panel_x + panel_w - 10, scrollbar_y, 6, scrollbar_h))
+
+        # Footer (always visible, not scrolled)
+        footer = tiny.render("[ESC] Close | Numbers to interact | Scroll to browse", True, (150, 150, 150))
         surface.blit(footer, (panel_x + panel_w // 2 - footer.get_width() // 2,
                               panel_y + panel_h - 25))
 

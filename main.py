@@ -164,6 +164,8 @@ class Game:
                 self.current_enemy = None
                 self.is_siege = False
                 self.battle_terrain_type = None
+                if hasattr(self.campaign, '_siege_settlement'):
+                    self.campaign._siege_settlement = None
                 self.state = GameState.CAMPAIGN
 
     def _handle_battle_event(self, event):
@@ -230,9 +232,12 @@ class Game:
         return data if data else None
 
     def _check_siege(self):
-        """Check if the battle should be a siege (near a castle settlement)."""
+        """Check if the battle should be a siege (settlement siege or near castle)."""
         if not self.campaign or not self.current_enemy:
             return False
+        # Explicit settlement siege triggered by pressing E on hostile settlement
+        if hasattr(self.campaign, '_siege_settlement') and self.campaign._siege_settlement:
+            return True
         from campaign.settlement import SettlementType
         from core.utils import distance
         for s in self.campaign.settlements:
@@ -355,11 +360,29 @@ class Game:
                 if self.player_character and self.player_character.trait == "scrapper":
                     bonus = int(self.battle_stats.get("loot_gold", 0) * 0.25)
                     self.campaign.player_army.gold += bonus
+
+                # Settlement siege: capture the settlement on victory
+                siege_s = getattr(self.campaign, '_siege_settlement', None)
+                if siege_s:
+                    old_owner = siege_s.owner
+                    capture_team = self.campaign.player_faction if self.campaign.player_faction is not None else 0
+                    siege_s.owner = capture_team
+                    self.campaign._add_notification(f"Captured {siege_s.name}!")
+                    self.campaign._territory_needs_update = True
+                    # Found faction if independent and capturing neutral/enemy
+                    if self.campaign.player_faction is None and old_owner is not None:
+                        self.campaign._found_player_faction(siege_s)
+                    self.campaign._siege_settlement = None
+
             # Apply casualties to player army (survivors persist)
             self.campaign.player_army.apply_battle_results(self.battle)
         else:
             # Defeat: apply casualties (survivors persist, but losses are real)
             self.campaign.player_army.apply_battle_results(self.battle)
+
+            # Clear siege settlement on defeat
+            if hasattr(self.campaign, '_siege_settlement'):
+                self.campaign._siege_settlement = None
 
             # D6: Player is captured (not killed) on defeat
             if self.current_enemy:

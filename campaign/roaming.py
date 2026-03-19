@@ -253,10 +253,11 @@ class RoamingManager:
         team = random.choices(list(weights.keys()), weights=list(weights.values()), k=1)[0]
         info = ROAMING_TYPES[team]
 
-        # Find a spawn location away from settlements
+        # Find a spawn location away from settlements (6000x4500 map)
+        from core.settings import CAMPAIGN_MAP_WIDTH, CAMPAIGN_MAP_HEIGHT
         for _ in range(10):
-            x = random.randint(100, 3900)
-            y = random.randint(100, 2900)
+            x = random.randint(100, CAMPAIGN_MAP_WIDTH - 100)
+            y = random.randint(100, CAMPAIGN_MAP_HEIGHT - 100)
             too_close = any(distance(x, y, s.x, s.y) < 150 for s in settlements)
             if not too_close:
                 break
@@ -308,6 +309,35 @@ class RoamingManager:
                 self.strongholds.append(sh)
                 scene._add_notification(
                     f"A {sh.name} has been established!")
+
+    def ensure_bandits_near(self, x, y, armies, settlements, scene, count=1):
+        """Ensure at least `count` bandit armies exist near (x, y). Spawn if needed."""
+        from campaign.army import create_enemy_army
+        radius = 400
+        nearby_bandits = sum(
+            1 for a in armies
+            if a.team == TEAM_BANDITS and distance(a.x, a.y, x, y) < radius
+        )
+        for _ in range(max(0, count - nearby_bandits)):
+            # Spawn a bandit near the quest location
+            for _ in range(10):
+                sx = x + random.randint(-300, 300)
+                sy = y + random.randint(-300, 300)
+                from core.settings import CAMPAIGN_MAP_WIDTH, CAMPAIGN_MAP_HEIGHT
+                sx = max(50, min(CAMPAIGN_MAP_WIDTH - 50, sx))
+                sy = max(50, min(CAMPAIGN_MAP_HEIGHT - 50, sy))
+                too_close = any(distance(sx, sy, s.x, s.y) < 80 for s in settlements)
+                if not too_close:
+                    break
+            info = ROAMING_TYPES[TEAM_BANDITS]
+            name = random.choice(info["name_pool"])
+            army = create_enemy_army(name, TEAM_BANDITS, sx, sy, 1)
+            target = random.randint(info["min_soldiers"], info["max_soldiers"])
+            while army.total_soldiers < target and len(army.squads) < 4:
+                from data.unit_types import MILITIA, SWORDSMEN
+                army.add_squad(random.choice([MILITIA, SWORDSMEN]))
+            scene.armies.append(army)
+            scene._get_ai(army)
 
     def record_roaming_win(self, army):
         """Record a battle win for a roaming army (for escalation)."""

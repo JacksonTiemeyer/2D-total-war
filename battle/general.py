@@ -41,6 +41,7 @@ class General:
         self.target_y = y
         self.selected = False
         self.attached_squad = None
+        self.target_squad = None  # squad this general is actively attacking
 
         # Combat
         self.attack_cooldown = 0
@@ -134,6 +135,13 @@ class General:
     def give_move_order(self, tx, ty):
         self.target_x = tx
         self.target_y = ty
+        self.target_squad = None  # clear squad target on manual move
+
+    def give_attack_order(self, squad):
+        """Order this general to attack a specific enemy squad."""
+        self.target_squad = squad
+        self.target_x = squad.x
+        self.target_y = squad.y
 
     def challenge_duel(self, other_general):
         """Initiate a duel challenge (Three Kingdoms style)."""
@@ -195,6 +203,14 @@ class General:
             self._update_duel()
             return
 
+        # Track target squad - update position if still alive
+        if self.target_squad:
+            if self.target_squad.is_destroyed:
+                self.target_squad = None
+            else:
+                self.target_x = self.target_squad.x
+                self.target_y = self.target_squad.y
+
         # Movement
         dx = self.target_x - self.x
         dy = self.target_y - self.y
@@ -209,6 +225,41 @@ class General:
             cx, cy = self.attached_squad.center
             self.x = cx
             self.y = cy
+
+        # General melee combat: attack nearby enemy soldiers
+        if self.attack_cooldown == 0:
+            best_target = None
+            best_dist = MELEE_RANGE * 2  # generals have slightly longer reach
+            for sq in enemy_squads:
+                if sq.is_destroyed:
+                    continue
+                for s in sq.alive_soldiers:
+                    d = distance(self.x, self.y, s.x, s.y)
+                    if d < best_dist:
+                        best_dist = d
+                        best_target = (s, sq)
+            if best_target:
+                soldier, squad = best_target
+                attack_power = self.melee_attack
+                if self._bloodlust_active:
+                    attack_power *= 1.5
+                if self._one_man_army_active:
+                    attack_power *= 2.0
+                if self._avatar_active:
+                    attack_power *= 2.5
+                effective_armor = soldier.armor * random.uniform(0.5, 1.0)
+                damage = max(1, attack_power * random.uniform(0.8, 1.2) - effective_armor * 0.3)
+                soldier.health -= damage
+                if soldier.health <= 0:
+                    soldier.alive = False
+                    squad.on_casualty()
+                    self.kills += 1
+                    # Soul Harvest: restore ability charges
+                    if self._soul_harvest_active:
+                        for a in self.abilities:
+                            if hasattr(a, 'current_cooldown') and a.current_cooldown > 0:
+                                a.current_cooldown = max(0, a.current_cooldown - 60)
+                self.attack_cooldown = 30
 
         # Apply morale aura to friendly squads
         for sq in friendly_squads:

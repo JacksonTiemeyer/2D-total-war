@@ -965,11 +965,11 @@ class BattleScene:
                     offset_y = (i - count / 2.0) * 60
                     sq.give_move_order(wx, wy + offset_y)
 
-        # Selected general with no enemy general target = move order
+        # Selected general with no enemy general target = move or attack order
         if self.selected_general and not target_general:
             if target_squad:
-                # General moves to attack the enemy squad position
-                self.selected_general.give_move_order(target_squad.x, target_squad.y)
+                # General attacks the enemy squad
+                self.selected_general.give_attack_order(target_squad)
             else:
                 self.selected_general.give_move_order(wx, wy)
 
@@ -1162,14 +1162,14 @@ class BattleScene:
                             g.challenge_duel(pg)
                             break
 
-            # Move general toward the battle
+            # General attacks nearest enemy squad
             if alive_player:
                 targets = [sq for sq in alive_player if sq.state == SquadState.FIGHTING]
                 if not targets:
                     targets = alive_player
                 if targets:
                     t = min(targets, key=lambda s: distance(g.x, g.y, s.x, s.y))
-                    g.give_move_order(t.x, t.y)
+                    g.give_attack_order(t)
 
     def _ai_find_best_target(self, sq, enemies, prefer_melee=False):
         """Find best target for a melee unit."""
@@ -1625,6 +1625,8 @@ class BattleScene:
             self.speed_multiplier = 2
         elif btn_id == "speed3":
             self.speed_multiplier = 4
+        elif btn_id == "fog_toggle":
+            self.fog_enabled = not self.fog_enabled
         elif btn_id == "walk":
             for sq in self.selected_squads:
                 sq.movement_mode = MOVE_MODE_WALK
@@ -1704,11 +1706,20 @@ class BattleScene:
             self._draw_button(surface, btn, btn_font)
 
         # Pause button
-        pause_btn = self._make_button(SCREEN_WIDTH // 2 + 80 + 3 * 36 + 8, 4, 55, 26,
+        pause_x = SCREEN_WIDTH // 2 + 80 + 3 * 36 + 8
+        pause_btn = self._make_button(pause_x, 4, 55, 26,
                                        "PAUSED" if self.paused else "Pause",
                                        active=self.paused)
         self._ui_buttons["pause"] = pause_btn
         self._draw_button(surface, pause_btn, btn_font)
+
+        # Fog of war toggle button
+        fog_x = pause_x + 60
+        fog_btn = self._make_button(fog_x, 4, 65, 26,
+                                     "FOG: ON" if self.fog_enabled else "FOG: OFF",
+                                     active=self.fog_enabled)
+        self._ui_buttons["fog_toggle"] = fog_btn
+        self._draw_button(surface, fog_btn, btn_font)
 
         if self.weather != "clear":
             weather_colors = {

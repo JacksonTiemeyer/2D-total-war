@@ -152,17 +152,25 @@ class QuestManager:
         self.completed_count = 0
         self.last_refresh_day = 0
 
-    def generate_bounty_board(self, settlements, factions, day):
+    def generate_bounty_board(self, settlements, factions, day,
+                              armies=None, roaming_manager=None, scene=None):
         """Generate new bounty board quests."""
         if day - self.last_refresh_day < self.REFRESH_INTERVAL and self.bounty_board:
             return
         self.last_refresh_day = day
         self.bounty_board = []
+        self._armies = armies
+        self._roaming_manager = roaming_manager
+        self._scene = scene
 
         for _ in range(self.BOUNTY_BOARD_SIZE):
             quest = self._generate_random_quest(settlements, factions)
             if quest:
                 self.bounty_board.append(quest)
+
+        self._armies = None
+        self._roaming_manager = None
+        self._scene = None
 
     def _generate_random_quest(self, settlements, factions):
         """Create a random quest."""
@@ -199,18 +207,23 @@ class QuestManager:
         from campaign.faction import TEAM_BANDITS
         gold = random.randint(60, 150)
         count = random.randint(1, 3)
-        if settlements:
-            s = random.choice(settlements)
-            return Quest(
-                QuestType.HUNT_BANDITS,
-                f"Hunt Bandits near {s.name}",
-                f"Destroy {count} bandit group(s) near {s.name}.",
-                target_x=s.x, target_y=s.y, target_name=s.name,
-                gold_reward=gold, rep_reward=10,
-                kill_target_team=TEAM_BANDITS, kill_count=count,
-                time_limit=random.randint(20, 40),
-            )
-        return None
+        if not settlements:
+            return None
+        s = random.choice(settlements)
+        # Ensure bandits actually exist near the quest target
+        if (self._roaming_manager and self._armies is not None
+                and self._scene is not None):
+            self._roaming_manager.ensure_bandits_near(
+                s.x, s.y, self._armies, settlements, self._scene, count=count)
+        return Quest(
+            QuestType.HUNT_BANDITS,
+            f"Hunt Bandits near {s.name}",
+            f"Destroy {count} bandit group(s) near {s.name}.",
+            target_x=s.x, target_y=s.y, target_name=s.name,
+            gold_reward=gold, rep_reward=10,
+            kill_target_team=TEAM_BANDITS, kill_count=count,
+            time_limit=random.randint(20, 40),
+        )
 
     def _gen_raid_quest(self, settlements, factions):
         # Find an enemy settlement

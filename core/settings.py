@@ -83,7 +83,7 @@ CAMPAIGN_MAP_WIDTH = 6000
 CAMPAIGN_MAP_HEIGHT = 4500
 
 # Real-time campaign
-CAMPAIGN_TICKS_PER_DAY = 300         # frames per in-game day at 1x speed
+CAMPAIGN_TICKS_PER_DAY = 900         # frames per in-game day at 1x speed (15 sec)
 CAMPAIGN_SPEED_PAUSED = 0
 CAMPAIGN_SPEED_1X = 1
 CAMPAIGN_SPEED_2X = 2
@@ -210,7 +210,7 @@ FOG_ALPHA = 140               # darkness of unexplored fog
 # Campaign
 SETTLEMENT_RADIUS = 20
 ARMY_ICON_RADIUS = 12
-CAMPAIGN_MOVE_SPEED = 3
+CAMPAIGN_MOVE_SPEED = 1.5  # base pixels/frame (reduced for slower pace)
 RECRUITMENT_COST_MULTIPLIER = 1.0
 INCOME_PER_SETTLEMENT = 100
 STARTING_GOLD = 500
