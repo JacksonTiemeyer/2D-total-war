@@ -354,7 +354,7 @@ class Game:
                 # B12: Update general opinion on player victory
                 self.campaign.diplomacy.battle_opinion_update(enemy_name, True)
 
-                self.campaign.remove_army(self.current_enemy)
+                self.campaign.remove_army(self.current_enemy, player_caused=True)
                 self.campaign.player_army.gold += self.battle_stats.get("loot_gold", 0)
                 # Player trait bonus
                 if self.player_character and self.player_character.trait == "scrapper":
@@ -368,11 +368,14 @@ class Game:
                     capture_team = self.campaign.player_faction if self.campaign.player_faction is not None else 0
                     siege_s.owner = capture_team
                     self.campaign._add_notification(f"Captured {siege_s.name}!")
+                    self.campaign.quest_manager.record_settlement_capture(siege_s.name)
                     self.campaign._territory_needs_update = True
                     # Found faction if independent and capturing neutral/enemy
                     if self.campaign.player_faction is None and old_owner is not None:
                         self.campaign._found_player_faction(siege_s)
                     self.campaign._siege_settlement = None
+
+                self._process_quest_progress()
 
             # Apply casualties to player army (survivors persist)
             self.campaign.player_army.apply_battle_results(self.battle)
@@ -407,6 +410,17 @@ class Game:
         self.is_siege = False
         self.battle_terrain_type = None
         self.state = GameState.CAMPAIGN
+
+    def _process_quest_progress(self):
+        """Apply quest rewards immediately after relevant battle outcomes."""
+        if not self.campaign:
+            return
+        completed, failed = self.campaign.quest_manager.update(
+            self.campaign.player_army, self.campaign.day, self.campaign.diplomacy)
+        for q in completed:
+            self.campaign._add_notification(f"Quest Complete: {q.title} (+{q.gold_reward}g)")
+        for q in failed:
+            self.campaign._add_notification(f"Quest Failed: {q.title}")
 
     def _award_post_battle_xp(self):
         """Award XP to generals after battle completion (not during battle)."""

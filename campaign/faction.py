@@ -79,6 +79,7 @@ TEAM_CULTISTS = 91
 TEAM_CANNIBALS = 92
 TEAM_DESERTERS = 93
 TEAM_MERCENARY = 94
+TEAM_GOBLINS = 12
 
 # Convenience: playable factions only
 PLAYABLE_FACTIONS = [f for f in FACTION_ROSTER if f.is_playable]

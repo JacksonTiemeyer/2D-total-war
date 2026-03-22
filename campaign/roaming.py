@@ -10,6 +10,7 @@ from core.utils import distance
 from campaign.faction import (
     TEAM_BANDITS, TEAM_CULTISTS, TEAM_CANNIBALS,
     TEAM_DESERTERS, TEAM_MERCENARY,
+    TEAM_GOBLINS,
 )
 
 # --- Roaming group definitions ---
@@ -21,6 +22,7 @@ ROAMING_TYPES = {
         "min_soldiers": 20, "max_soldiers": 60,
         "behavior": "ambush",  # lurk near roads/settlements
         "loot_gold": (20, 80),
+        "spawn_weight": 55,
     },
     TEAM_CULTISTS: {
         "name_pool": ["Dark Cult", "Shadow Sect", "Dread Followers",
@@ -28,6 +30,7 @@ ROAMING_TYPES = {
         "min_soldiers": 30, "max_soldiers": 80,
         "behavior": "raid",  # raid villages
         "loot_gold": (30, 100),
+        "spawn_weight": 22,
     },
     TEAM_CANNIBALS: {
         "name_pool": ["Flesh Eaters", "Mountain Maneaters", "The Hungry",
@@ -35,6 +38,7 @@ ROAMING_TYPES = {
         "min_soldiers": 15, "max_soldiers": 40,
         "behavior": "ambush",
         "loot_gold": (10, 40),
+        "spawn_weight": 15,
     },
     TEAM_DESERTERS: {
         "name_pool": ["Deserter Band", "Broken Company", "The Forsaken",
@@ -42,6 +46,7 @@ ROAMING_TYPES = {
         "min_soldiers": 20, "max_soldiers": 50,
         "behavior": "wander",
         "loot_gold": (15, 50),
+        "spawn_weight": 18,
     },
     TEAM_MERCENARY: {
         "name_pool": ["Sellsword Company", "Bronze Hawks", "Iron Wolves",
@@ -49,6 +54,15 @@ ROAMING_TYPES = {
         "min_soldiers": 40, "max_soldiers": 100,
         "behavior": "wander",  # travel between settlements
         "loot_gold": (0, 0),  # can be hired, not looted
+        "spawn_weight": 12,
+    },
+    TEAM_GOBLINS: {
+        "name_pool": ["Goblin Raiders", "Sniveler Mob", "Moonclaw Pack",
+                       "Crooked Knives", "Goblin Wolf Pack"],
+        "min_soldiers": 25, "max_soldiers": 70,
+        "behavior": "ambush",
+        "loot_gold": (15, 60),
+        "spawn_weight": 20,
     },
 }
 
@@ -79,6 +93,8 @@ class Stronghold:
             TEAM_BANDITS: "Bandit",
             TEAM_CULTISTS: "Cult",
             TEAM_CANNIBALS: "Cannibal",
+            TEAM_DESERTERS: "Deserter",
+            TEAM_GOBLINS: "Goblin",
         }
         prefix = prefixes.get(self.team, "Outlaw")
         if self.stage == StrongholdStage.ENCAMPMENT:
@@ -206,9 +222,9 @@ class RoamingManager:
     """Manages spawning, despawning, and escalation of roaming armies."""
 
     # Max roaming armies on the map at once
-    MAX_ROAMING = 12
+    MAX_ROAMING = 22
     # Days between spawn checks
-    SPAWN_INTERVAL = 5
+    SPAWN_INTERVAL = 3
     # Event check interval (days)
     EVENT_INTERVAL = 10
     # Chance of random event per check
@@ -242,15 +258,10 @@ class RoamingManager:
         if roaming_count >= self.MAX_ROAMING:
             return
 
-        # Pick a random roaming type (weighted: more bandits, fewer mercs)
-        weights = {
-            TEAM_BANDITS: 40,
-            TEAM_CULTISTS: 15,
-            TEAM_CANNIBALS: 10,
-            TEAM_DESERTERS: 15,
-            TEAM_MERCENARY: 20,
-        }
-        team = random.choices(list(weights.keys()), weights=list(weights.values()), k=1)[0]
+        # Pick a random roaming type with extra pressure on hostile wilderness groups.
+        roaming_teams = list(ROAMING_TYPES.keys())
+        weights = [ROAMING_TYPES[team].get("spawn_weight", 10) for team in roaming_teams]
+        team = random.choices(roaming_teams, weights=weights, k=1)[0]
         info = ROAMING_TYPES[team]
 
         # Find a spawn location away from settlements (6000x4500 map)
@@ -338,6 +349,47 @@ class RoamingManager:
                 army.add_squad(random.choice([MILITIA, SWORDSMEN]))
             scene.armies.append(army)
             scene._get_ai(army)
+
+    def ensure_hideout_near(self, x, y, team, armies, settlements, scene, guard_count=1):
+        """Ensure a hideout stronghold and its guards exist near a quest target."""
+        from campaign.army import create_enemy_army
+        radius = 450
+        hideout = next(
+            (s for s in self.strongholds
+             if s.team == team and distance(s.x, s.y, x, y) < radius),
+            None
+        )
+        if hideout is None:
+            sx, sy = x, y
+            for _ in range(12):
+                sx = x + random.randint(-260, 260)
+                sy = y + random.randint(-260, 260)
+                from core.settings import CAMPAIGN_MAP_WIDTH, CAMPAIGN_MAP_HEIGHT
+                sx = max(50, min(CAMPAIGN_MAP_WIDTH - 50, sx))
+                sy = max(50, min(CAMPAIGN_MAP_HEIGHT - 50, sy))
+                too_close = any(distance(sx, sy, s.x, s.y) < 100 for s in settlements)
+                if not too_close:
+                    break
+            hideout = Stronghold(sx, sy, team, StrongholdStage.ENCAMPMENT)
+            self.strongholds.append(hideout)
+
+        nearby_guards = sum(
+            1 for a in armies
+            if a.team == team and distance(a.x, a.y, hideout.x, hideout.y) < 220
+        )
+        for _ in range(max(0, guard_count - nearby_guards)):
+            gx = hideout.x + random.randint(-120, 120)
+            gy = hideout.y + random.randint(-120, 120)
+            info = ROAMING_TYPES[team]
+            army = create_enemy_army(random.choice(info["name_pool"]), team, gx, gy, 1)
+            target = random.randint(info["min_soldiers"], info["max_soldiers"])
+            while army.total_soldiers < target and len(army.squads) < 5:
+                from data.unit_types import MILITIA, SWORDSMEN
+                army.add_squad(random.choice([MILITIA, SWORDSMEN]))
+            scene.armies.append(army)
+            scene._get_ai(army)
+
+        return hideout
 
     def record_roaming_win(self, army):
         """Record a battle win for a roaming army (for escalation)."""

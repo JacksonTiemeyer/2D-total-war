@@ -49,7 +49,7 @@ TASK_PRIORITY = [
 ]
 
 # Bandit-like team IDs
-BANDIT_TEAMS = {90, 91, 92, 93, 94}
+BANDIT_TEAMS = {12, 90, 91, 92, 93, 94}
 
 
 def pick_personality():
@@ -85,12 +85,14 @@ class ArmyAI:
         if self.task_cooldown > 0:
             self.task_cooldown -= 1
             # Still moving toward current target
+            self.army.current_status = self._task_status_label(self.current_task)
             self.army.update()
             return
 
         task, target = self._evaluate_priorities(armies, settlements, diplomacy)
         self.current_task = task
         self.task_target = target
+        self.army.current_status = self._task_status_label(task)
 
         if target:
             tx, ty = target
@@ -109,6 +111,18 @@ class ArmyAI:
             self.task_cooldown = random.randint(30, 60)
 
         self.army.update()
+
+    def _task_status_label(self, task):
+        labels = {
+            AITask.DEFEND_HOME: "Defending territory",
+            AITask.WAR_ORDERS: "Marching to war",
+            AITask.PATROL: "Patrolling",
+            AITask.HUNT_BANDITS: "Hunting marauders",
+            AITask.PILLAGE: "Raiding",
+            AITask.REINFORCE: "Reinforcing allies",
+            AITask.IDLE_GARRISON: "Garrisoning",
+        }
+        return labels.get(task, "Marching")
 
     def _evaluate_priorities(self, armies, settlements, diplomacy):
         """Return (task, (x,y)) for the highest-priority actionable task."""

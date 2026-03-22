@@ -282,11 +282,12 @@ class SettlementInteraction:
         """B3: Handle quest bounty board clicks."""
         if not self.quest_manager:
             return None
-        for i in range(len(self.quest_manager.bounty_board)):
+        board = self.quest_manager.get_bounty_board(self.settlement)
+        for i in range(len(board)):
             key = f"quest_accept_{i}"
             if key in self._button_rects and point_in_rect(mx, my, *self._button_rects[key]):
-                q = self.quest_manager.bounty_board[i]
-                if self.quest_manager.accept_quest(q, self.day):
+                q = board[i]
+                if self.quest_manager.accept_quest(q, self.day, settlement=self.settlement):
                     self._flash(f"Quest accepted: {q.title}")
                 else:
                     self._flash("Cannot accept more quests (max 5).")
@@ -679,7 +680,7 @@ class SettlementInteraction:
             count_str = f"{sq.current_count}/{sq.max_count}" if sq.is_understrength else str(sq.current_count)
             rank_str = f" [{sq.rank_name}]" if sq.battles_survived > 0 else ""
             txt = self._font_small.render(
-                f"{stats.name} ({count_str}){rank_str} - {stats.upkeep}/turn",
+                f"{stats.name} ({count_str}){rank_str} - {stats.upkeep}/week",
                 True, WHITE)
             surface.blit(txt, (right_x + 5, y_right + 5))
 
@@ -697,7 +698,7 @@ class SettlementInteraction:
         limit = _army_size_limit(self.army.general_level)
         footer = self._font_small.render(
             f"Soldiers: {self.army.total_soldiers}/{limit}  |  "
-            f"Upkeep: {self.army.upkeep}/turn  |  Gold: {self.army.gold}",
+            f"Upkeep: {self.army.upkeep}/week  |  Gold: {self.army.gold}",
             True, _TEXT_DIM)
         surface.blit(footer, (cx + 10, cy + ch - 25))
 
@@ -882,9 +883,9 @@ class SettlementInteraction:
             return
 
         # Available quests
-        board = self.quest_manager.bounty_board
+        board = self.quest_manager.get_bounty_board(self.settlement)
         if not board:
-            t = self._font_small.render("No bounties available. Check back later.", True, _TEXT_DIM)
+            t = self._font_small.render("No local contracts available here right now.", True, _TEXT_DIM)
             surface.blit(t, (cx + 15, y))
             y += 22
         else:

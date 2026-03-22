@@ -98,6 +98,9 @@ class CampaignScene:
         self.pending_battle = None  # (player_army, enemy_army, terrain_type) tuple
         self._siege_settlement = None  # settlement being besieged
         self._selected_army = None     # clicked NPC army for info display
+        self._pending_map_interaction = None
+        self._last_click_time = 0
+        self._last_click_signature = None
 
         # B9/C3: Settlement interaction
         self.settlement_interaction = None  # SettlementInteraction instance or None
@@ -123,6 +126,7 @@ class CampaignScene:
         # Territory border cache
         self._territory_surface = None
         self._territory_needs_update = True
+        self.trade_warning = None
 
         # AI tick timer (replaces per-turn AI)
         self._ai_tick_timer = 0
@@ -196,6 +200,7 @@ class CampaignScene:
         self._generate_world()
         self._init_ai_controllers()
         self._register_generals()
+        self._update_trade_connectivity_warning()
         self._add_notification("You begin as an independent lord. Visit settlements to recruit and trade!")
 
     def _add_notification(self, text):
@@ -517,6 +522,7 @@ class CampaignScene:
 
     def _handle_left_click(self, pos):
         wx, wy = self.camera.screen_to_world(*pos)
+        click_signature = None
 
         # Check HUD buttons first (top bar speed controls)
         if pos[1] < 36:
@@ -539,6 +545,9 @@ class CampaignScene:
             if distance(wx, wy, s.x, s.y) < 30:
                 s.selected = True
                 self.selected_settlement = s
+                click_signature = ("settlement", id(s))
+                if self._is_double_click(click_signature):
+                    self._interact_with_settlement(s)
                 return
 
         # Check clicking on enemy/NPC armies
@@ -549,11 +558,29 @@ class CampaignScene:
                 continue
             if distance(wx, wy, army.x, army.y) < 25:
                 self._selected_army = army
+                click_signature = ("army", id(army))
+                if self._is_double_click(click_signature):
+                    self._interact_with_army(army)
                 return
 
         # Check player army
         if distance(wx, wy, self.player_army.x, self.player_army.y) < 20:
             self.player_army.selected = True
+            click_signature = ("player", id(self.player_army))
+
+        self._is_double_click(click_signature)
+
+    def _is_double_click(self, click_signature):
+        """Return True when the same map target is clicked twice quickly."""
+        now = pygame.time.get_ticks()
+        is_double = (
+            click_signature is not None and
+            click_signature == self._last_click_signature and
+            now - self._last_click_time <= 400
+        )
+        self._last_click_signature = click_signature
+        self._last_click_time = now
+        return is_double
 
     def _handle_top_bar_click(self, pos):
         """Handle clicks on the top bar (speed controls)."""
@@ -587,11 +614,80 @@ class CampaignScene:
             self._add_notification("Cannot move while captured!")
             return
         wx, wy = self.camera.screen_to_world(*pos)
+        self._pending_map_interaction = None
         self.player_army.give_move_order(wx, wy)
 
-    def _try_enter_settlement(self):
+    def _interact_with_settlement(self, settlement):
+        """Smart settlement interaction for double-clicks."""
+        if distance(self.player_army.x, self.player_army.y, settlement.x, settlement.y) < 60:
+            self._try_enter_settlement(settlement)
+        else:
+            self._queue_map_interaction("settlement", settlement, settlement.x, settlement.y)
+
+    def _interact_with_army(self, army):
+        """Smart general interaction for double-clicks."""
+        if self._are_hostile(0, army.team):
+            if distance(self.player_army.x, self.player_army.y, army.x, army.y) < 25:
+                battle_x = (self.player_army.x + army.x) / 2
+                battle_y = (self.player_army.y + army.y) / 2
+                terrain_type = self._get_terrain_at_position(battle_x, battle_y)
+                self.pending_battle = (self.player_army, army, terrain_type)
+                self.paused = True
+            else:
+                self._queue_map_interaction("army", army, army.x, army.y)
+            return
+
+        if distance(self.player_army.x, self.player_army.y, army.x, army.y) < PERSUASION_RANGE:
+            self.persuasion_target = army
+            self.show_persuasion = True
+            self.paused = True
+        else:
+            self._queue_map_interaction("army", army, army.x, army.y)
+
+    def _queue_map_interaction(self, target_type, target, x, y):
+        """Move the player army toward a target, then interact on arrival."""
+        self._pending_map_interaction = {"type": target_type, "target": target}
+        self.player_army.give_move_order(x, y)
+        label = target.name if target_type == "settlement" else target.general_name
+        self._add_notification(f"Moving to {label}...")
+
+    def _update_pending_map_interaction(self):
+        """Resolve queued double-click interactions once the player arrives."""
+        if self.paused or not self._pending_map_interaction:
+            return
+
+        interaction = self._pending_map_interaction
+        target = interaction["target"]
+        if interaction["type"] == "settlement":
+            if target not in self.settlements:
+                self._pending_map_interaction = None
+                return
+            if distance(self.player_army.x, self.player_army.y, target.x, target.y) < 60:
+                self._pending_map_interaction = None
+                self._try_enter_settlement(target)
+        else:
+            if target not in self.armies or target.is_player:
+                self._pending_map_interaction = None
+                return
+            if (not self._are_hostile(0, target.team) and
+                    distance(self.player_army.x, self.player_army.y, target.x, target.y) < PERSUASION_RANGE):
+                self._pending_map_interaction = None
+                self._interact_with_army(target)
+                return
+            if self.player_army.moving:
+                self.player_army.target_x = target.x
+                self.player_army.target_y = target.y
+            elif self._are_hostile(0, target.team):
+                self.player_army.give_move_order(target.x, target.y)
+            else:
+                self.player_army.give_move_order(target.x, target.y)
+
+    def _try_enter_settlement(self, target_settlement=None):
         """B9: Try to enter a nearby settlement for interaction, or siege if hostile."""
-        for s in self.settlements:
+        settlements = [target_settlement] if target_settlement else self.settlements
+        for s in settlements:
+            if s is None:
+                continue
             if distance(self.player_army.x, self.player_army.y, s.x, s.y) < 60:
                 # Hostile settlement -> trigger siege battle
                 if s.owner is not None and self.diplomacy.are_at_war(0, s.owner):
@@ -694,6 +790,7 @@ class CampaignScene:
                     if state == DiplomacyState.WAR:
                         if self.diplomacy.propose_peace(0, target.team):
                             self._add_notification(f"Peace with {target.name}!")
+                            self._update_trade_connectivity_warning()
                         else:
                             self._add_notification(f"{target.name} rejected peace.")
                     elif state in (DiplomacyState.FRIENDLY,):
@@ -702,11 +799,13 @@ class CampaignScene:
                             self._join_faction(target)
                         elif self.diplomacy.propose_alliance(0, target.team):
                             self._add_notification(f"Allied with {target.name}!")
+                            self._update_trade_connectivity_warning()
                         else:
                             self._add_notification(f"{target.name} declined alliance.")
                     elif state in (DiplomacyState.NEUTRAL, DiplomacyState.HOSTILE):
                         self.diplomacy.declare_war(0, target.team)
                         self._add_notification(f"War declared on {target.name}!")
+                        self._update_trade_connectivity_warning()
             # B2: Leave faction with 'L' key
             if event.key == pygame.K_l and self.player_faction is not None:
                 self._leave_faction()
@@ -727,6 +826,7 @@ class CampaignScene:
                 self.diplomacy.declare_war(0, other_f.team)
         self._add_notification(f"Joined {faction.name}! You are now a vassal.")
         self._territory_needs_update = True
+        self._update_trade_connectivity_warning()
 
     def _found_player_faction(self, settlement):
         """B7: Player founds their own faction by capturing a neutral settlement."""
@@ -751,6 +851,7 @@ class CampaignScene:
         self.player_faction = None
         self._add_notification(f"Left {faction_display}. You are independent again.")
         self._territory_needs_update = True
+        self._update_trade_connectivity_warning()
 
     # ------------------------------------------------------------------
     # D1: Terrain detection for battles
@@ -962,19 +1063,19 @@ class CampaignScene:
                 # Vassal gets reduced income from faction settlements
                 self.player_army.gold += int(s.income * income_mult) // 4
 
-        # Pay upkeep (morale penalty and desertion if can't afford)
-        upkeep = self.player_army.upkeep
-        if self.player_army.gold >= upkeep:
-            self.player_army.gold -= upkeep
-        else:
-            self.player_army.gold -= upkeep
-            # Morale penalty for unpaid troops
-            deficit_ratio = min(1.0, abs(self.player_army.gold) / max(1, upkeep))
-            for sq in self.player_army.squads:
-                sq_morale = getattr(sq, 'campaign_morale', 100)
-                sq.campaign_morale = max(0, sq_morale - 5 * deficit_ratio)
-            if self.player_army.gold < -upkeep * 3:
-                self._add_notification("Your troops are unpaid! Risk of desertion!")
+        # Pay upkeep weekly instead of daily.
+        if self.day % 7 == 0:
+            upkeep = self.player_army.upkeep
+            if self.player_army.gold >= upkeep:
+                self.player_army.gold -= upkeep
+            else:
+                self.player_army.gold -= upkeep
+                deficit_ratio = min(1.0, abs(self.player_army.gold) / max(1, upkeep))
+                for sq in self.player_army.squads:
+                    sq_morale = getattr(sq, 'campaign_morale', 100)
+                    sq.campaign_morale = max(0, sq_morale - 5 * deficit_ratio)
+                if self.player_army.gold < -upkeep * 3:
+                    self._add_notification("Your troops are unpaid for the week! Risk of desertion!")
 
         # Refresh recruitment pools periodically (every 3 days)
         if self.day % 3 == 0:
@@ -1059,6 +1160,7 @@ class CampaignScene:
         # Mark fog as needing update
         self._fog_needs_update = True
         self._territory_needs_update = True
+        self._update_trade_connectivity_warning()
 
     def _init_ai_controllers(self):
         """B5: Attach AI controllers to all non-player armies."""
@@ -1168,6 +1270,8 @@ class CampaignScene:
                 self.ai_controllers.pop(id(army), None)
         # B8: Record wins for roaming armies (stronghold escalation)
         for w in winners:
+            if getattr(w, "current_status", "") == "Hunting marauders":
+                w.current_status = f"Victorious near {w.current_location}"
             self.roaming_manager.record_roaming_win(w)
 
     def _save_game(self):
@@ -1196,10 +1300,21 @@ class CampaignScene:
             # D2: Desert factions get summer speed bonus
             if season == SEASON_SUMMER and army.team == 3:  # Desert Raiders
                 army.speed = base_speed * SEASON_SUMMER_DESERT_SPEED_BONUS
+            army.update_campaign_context(
+                self.settlements, self._get_terrain_at_position(army.x, army.y))
 
         # Pause input lock: do not advance player movement while paused.
         if not self.paused:
             self.player_army.update()
+            self._update_pending_map_interaction()
+            self.player_army.update_campaign_context(
+                self.settlements, self._get_terrain_at_position(self.player_army.x, self.player_army.y))
+            self.player_army.current_status = "Marching" if self.player_army.moving else "Idle"
+        else:
+            if self.settlement_interaction:
+                self.player_army.current_status = f"In {self.settlement_interaction.settlement.name}"
+            else:
+                self.player_army.current_status = "Paused"
 
         # Tick save notification
         if hasattr(self, '_save_notification_timer') and self._save_notification_timer > 0:
@@ -1264,15 +1379,46 @@ class CampaignScene:
                     return True
         return False
 
+    def _update_trade_connectivity_warning(self):
+        """Warn when faction relations partition the trade network."""
+        active_teams = sorted({s.owner for s in self.settlements if s.owner is not None and s.owner > 0})
+        if len(active_teams) < 2:
+            self.trade_warning = None
+            return
+
+        graph = {team: set() for team in active_teams}
+        for i, team_a in enumerate(active_teams):
+            for team_b in active_teams[i + 1:]:
+                if self.diplomacy.get_state(team_a, team_b) != DiplomacyState.WAR:
+                    graph[team_a].add(team_b)
+                    graph[team_b].add(team_a)
+
+        visited = set()
+        stack = [active_teams[0]]
+        while stack:
+            team = stack.pop()
+            if team in visited:
+                continue
+            visited.add(team)
+            stack.extend(graph[team] - visited)
+
+        if len(visited) == len(active_teams):
+            self.trade_warning = None
+            return
+
+        disconnected = [f.name for f in self.factions
+                        if f.team in active_teams and f.team not in visited]
+        self.trade_warning = "Trade network fragmented: " + ", ".join(disconnected)
+
     def get_pending_battle(self):
         battle = self.pending_battle
         self.pending_battle = None
         return battle
 
-    def remove_army(self, army):
+    def remove_army(self, army, player_caused=False):
         if army in self.armies:
-            # B3: Record kill for quest tracking
-            self.quest_manager.record_kill(army.team)
+            if player_caused:
+                self.quest_manager.record_kill(army)
             self.armies.remove(army)
             self.ai_controllers.pop(id(army), None)
 
@@ -1693,7 +1839,7 @@ class CampaignScene:
         army_text = font.render(
             f"{faction_str} | "
             f"Army: {self.player_army.total_soldiers}/{self.player_army.army_size_limit} | "
-            f"Upkeep: {self.player_army.upkeep}/day",
+            f"Upkeep: {self.player_army.upkeep}/week",
             True, WHITE)
         surface.blit(army_text, (speed_x + 20, 8))
 
@@ -1747,6 +1893,10 @@ class CampaignScene:
                 notif_alpha_surf.set_alpha(alpha)
                 surface.blit(notif_alpha_surf, (10, notif_y))
                 notif_y += 18
+
+        if self.trade_warning:
+            warning = small_font.render(self.trade_warning, True, (255, 180, 80))
+            surface.blit(warning, (SCREEN_WIDTH - warning.get_width() - 12, 45))
 
         # Selected settlement info
         if self.selected_settlement:
@@ -1807,7 +1957,7 @@ class CampaignScene:
     def _draw_army_info_panel(self, surface, font, small_font):
         """Draw info panel for a selected NPC army."""
         army = self._selected_army
-        panel_h = 140
+        panel_h = 180
         panel = pygame.Surface((260, panel_h), pygame.SRCALPHA)
         panel.fill((0, 0, 0, 190))
         surface.blit(panel, (SCREEN_WIDTH - 270, 45))
@@ -1830,6 +1980,14 @@ class CampaignScene:
         # Army strength
         str_text = small_font.render(f"Soldiers: {army.total_soldiers}", True, WHITE)
         surface.blit(str_text, (x, y))
+        y += 18
+
+        loc_text = small_font.render(f"Location: {army.current_location}", True, (180, 180, 180))
+        surface.blit(loc_text, (x, y))
+        y += 18
+
+        status_text = small_font.render(f"Status: {army.current_status}", True, (180, 180, 180))
+        surface.blit(status_text, (x, y))
         y += 18
 
         # Diplomatic state
@@ -2054,7 +2212,7 @@ class CampaignScene:
         y = max(y + 10, panel_y + panel_h - 120)
         pygame.draw.line(surface, (80, 80, 100), (panel_x + 10, y), (panel_x + panel_w - 10, y))
         y += 5
-        bb = small.render(f"Bounty Board ({len(self.quest_manager.bounty_board)} available)", True, (200, 180, 100))
+        bb = small.render("Bounty Board (varies by settlement/faction)", True, (200, 180, 100))
         surface.blit(bb, (panel_x + 20, y))
         y += 22
         for q in self.quest_manager.bounty_board[:3]:
@@ -2704,7 +2862,7 @@ class CampaignScene:
 
         army_info = small.render(
             f"Army: {pa.total_soldiers}/{pa.army_size_limit} soldiers  |  "
-            f"Strength: {pa.army_strength}  |  Upkeep: {pa.upkeep}/day",
+            f"Strength: {pa.army_strength}  |  Upkeep: {pa.upkeep}/week",
             True, (180, 180, 180))
         surface.blit(army_info, (panel_x + 15, y))
         y += 22

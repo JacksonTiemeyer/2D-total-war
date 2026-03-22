@@ -104,6 +104,9 @@ class Army:
 
         # Economy
         self.gold = STARTING_GOLD if is_player else 300
+        self.current_status = "Idle"
+        self.current_location = "Unknown"
+        self.current_region = "Wilderness"
 
     @property
     def total_soldiers(self):
@@ -240,8 +243,10 @@ class Army:
             (small_font, f"Strength: {self.army_strength}", WHITE),
             (small_font, f"Soldiers: {self.total_soldiers}/{self.army_size_limit}", WHITE),
             (small_font, f"Gold: {self.gold}", (255, 215, 0)),
-            (small_font, f"Upkeep: {self.upkeep}/turn", (200, 150, 100)),
+            (small_font, f"Upkeep: {self.upkeep}/week", (200, 150, 100)),
             (small_font, f"General: {self.general_name} ({self.general_stats.name}) Lv{self.general_level}", WHITE),
+            (small_font, f"Status: {self.current_status}", WHITE),
+            (small_font, f"Location: {self.current_location}", WHITE),
         ]
         # D3: Supply status
         morale = getattr(self, 'campaign_morale', 100)
@@ -263,6 +268,26 @@ class Army:
             surface.blit(rendered, (x, y))
             y += rendered.get_height() + 2
         return y
+
+    def update_campaign_context(self, settlements, terrain_type=None):
+        """Track army location text for map UI and AI behavior feedback."""
+        nearest = None
+        nearest_dist = float("inf")
+        for settlement in settlements:
+            d = distance(self.x, self.y, settlement.x, settlement.y)
+            if d < nearest_dist:
+                nearest = settlement
+                nearest_dist = d
+
+        if nearest and nearest_dist < 120:
+            self.current_location = nearest.name
+            self.current_region = nearest.settlement_type.title()
+        elif nearest:
+            self.current_location = f"Near {nearest.name}"
+            self.current_region = terrain_type.title() if terrain_type else "Borderlands"
+        else:
+            self.current_location = terrain_type.title() if terrain_type else "Wilderness"
+            self.current_region = self.current_location
 
 
 def create_default_player_army():
