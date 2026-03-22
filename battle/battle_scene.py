@@ -29,6 +29,7 @@ from core.utils import distance, point_in_rect, angle_between, get_font
 from battle.squad import Squad, SquadState, Formation
 from battle.general import General, DuelState
 from core.audio import get_audio
+from battle.engine import CombatEngine
 
 
 class BattleResult:
@@ -112,6 +113,19 @@ class BattleScene:
             g._all_enemy_generals = self.enemy_generals
         for g in self.enemy_generals:
             g._all_enemy_generals = self.player_generals
+
+        # Patch A: initialize combat engine scaffold after armies and generals are deployed
+        try:
+            self._combat_engine = CombatEngine(
+                player_squads=self.player_squads,
+                enemy_squads=self.enemy_squads,
+                player_generals=self.player_generals,
+                enemy_generals=self.enemy_generals,
+                terrain=self.terrain,
+                weather=self.weather,
+            )
+        except Exception:
+            self._combat_engine = None
 
     def _choose_weather(self):
         """D2: Choose weather based on season and terrain."""
@@ -985,6 +999,13 @@ class BattleScene:
         self.battle_timer += 1
 
     def _tick(self):
+        # Patch A: delegate a frame to the new CombatEngine scaffold if present
+        try:
+            if hasattr(self, "_combat_engine") and self._combat_engine is not None:
+                self._combat_engine.step()
+        except Exception:
+            # If the engine isn't fully wired yet, continue with the existing tick
+            pass
         # Compute fog of war visibility
         self._compute_visibility()
 

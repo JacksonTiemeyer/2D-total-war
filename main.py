@@ -26,7 +26,10 @@ Controls:
 """
 
 import sys
-import pygame
+try:
+    import pygame  # type: ignore
+except Exception:
+    pygame = None
 from core.settings import SCREEN_WIDTH, SCREEN_HEIGHT, FPS, TITLE, WHITE, BLACK, GOLD
 from core.utils import get_font
 from campaign.campaign_scene import CampaignScene
@@ -45,6 +48,9 @@ class GameState:
 
 class Game:
     def __init__(self):
+        if pygame is None:
+            print("pygame is not installed or failed to import. Please install pygame to run the game.")
+            sys.exit(1)
         pygame.init()
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
         pygame.display.set_caption(TITLE)
