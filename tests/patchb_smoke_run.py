@@ -1,23 +1,15 @@
-# Lightweight runnable smoke test for Patch B combat engine without test framework
-from battle.engine import CombatEngine
+#!/usr/bin/env python3
+"""Runner script for Patch B smoke tests."""
 
-class MockSquad:
-    def __init__(self, team):
-        self.team = team
-        self._destroyed = False
-    @property
-    def is_destroyed(self):
-        return self._destroyed
-    def update(self, all_squads):
-        pass
+import sys
+import os
 
-def run():
-    s1 = MockSquad(0)
-    s2 = MockSquad(1)
-    engine = CombatEngine(player_squads=[s1], enemy_squads=[s2], player_generals=[], enemy_generals=[], terrain=None, weather=None)
-    for _ in range(3):
-        engine.step()
-    print("Patch B smoke run complete")
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-if __name__ == '__main__':
-    run()
+print("=== Patch B Smoke Tests ===\n")
+
+from tests.patchb_smoke_test import run_all
+
+success = run_all()
+print("\n" + ("ALL TESTS PASSED" if success else "SOME TESTS FAILED"))
+sys.exit(0 if success else 1)

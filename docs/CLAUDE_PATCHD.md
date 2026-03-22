@@ -1,13 +1,44 @@
-Patch D Context: SiegeEngine scaffolding and integration
+# Patch D — SiegeEngine Scaffolding
 
-What Patch D will implement
-- Introduce battle/siege_engine.py with a minimal SiegeEngine interface
-- Wire SiegeEngine into CombatEngine scaffolding for future integration
-- Preserve existing BattleScene behavior (non-breaking)
+## Script
+- **Name**: SiegeEngine
+- **Path**: `battle/siege_engine.py`
 
-Rationale
-- Siege mechanics add depth; patching behind a dedicated engine makes it easier to evolve without breaking the core loop
+## Purpose
+Centralized siege battle logic scaffold for walls, gates, and towers.
 
-What Claude should implement next (high-level)
-- Implement siege-specific updates (gate damage, tower firing, wall collisions) inside SiegeEngine
-- Connect CombatEngine to call SiegeEngine.step() or tick() during per-frame updates in a future patch
+## Key Classes/Structures
+- `SiegeEngine` — Siege-specific combat mechanics engine.
+
+## Public API Surface
+```python
+SiegeEngine.__init__(self, walls=None, gates=None, towers=None)
+SiegeEngine.step(self) -> None
+```
+
+## Core Data Structures
+- `walls` — List of WallSegment instances
+- `gates` — List of Gate instances
+- `towers` — List of Tower instances
+
+## Notable Algorithms/Patterns
+- `step()` naming matches CombatEngine convention
+- Constructor accepts optional lists for incremental wiring
+
+## Interaction Surface
+- **Will replace**: Siege logic in `battle/siege_scene.py` _tick() override
+- **References**: Gate, WallSegment, Tower classes from siege_scene.py
+
+## Design Notes and Tradeoffs
+- Kept as separate engine (not subclass of CombatEngine) for composition flexibility
+- Gate/Wall/Tower objects remain in siege_scene.py; engine only orchestrates their tick logic
+
+## Testing Notes
+- Import test: `python -c "from battle.siege_engine import SiegeEngine"`
+
+## Migration/Extension Notes
+- Future: move wall collision, gate HP, tower auto-fire from SiegeScene._tick()
+- Future: add breach detection, siege equipment (rams, ladders)
+
+## References
+- `battle/siege_scene.py` — Gate, WallSegment, Tower classes (438 lines)

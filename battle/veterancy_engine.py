@@ -1,16 +1,22 @@
-"""Veterancy and XP propagation scaffolding (Patch E).
+"""VeterancyEngine - centralized veterancy and post-battle XP propagation.
 
-This module will centralize veterancy progression, post-battle XP, and how
-XP translates into campaign squad and general growth. For Patch E we provide a
-minimal interface to attach XP events and query veterancy state.
+Future home for XP formula, level-up checks, and squad veterancy
+progression currently spread across main.py and campaign/army.py.
 """
 
+
 class VeterancyEngine:
+    """Engine for veterancy tracking and XP distribution."""
+
     def __init__(self):
         pass
 
-    def award_xp(self, general, xp_amount: int):
-        """Award XP to a general. Placeholder implementation."""
-        if hasattr(general, 'gain_xp'):
-            general.gain_xp(xp_amount)
-        return None
+    def award_xp(self, general, amount):
+        """Award XP to a general.
+
+        Args:
+            general: General instance with an xp attribute.
+            amount: XP amount to award.
+        """
+        if hasattr(general, 'xp'):
+            general.xp += amount

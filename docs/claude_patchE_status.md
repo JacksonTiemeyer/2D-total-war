@@ -1,8 +1,10 @@
-Patch E Status: Veterancy and XP scaffolding
+# Patch E Status
 
-- Added battle/veterancy_engine.py with a minimal award_xp hook
-- Patch E documents XP distribution strategy and prepares for campaign integration
-
-Next steps for Claude:
-- Flesh out XP distribution rules and tie them into post-battle UI and campaign progression
-- Implement unit tests for veterancy increments and XP boundaries
+- **Applied**: Yes
+- **Date**: 2026-03-22
+- **Files Created**:
+  - `battle/veterancy_engine.py`
+  - `docs/CLAUDE_PATCHE.md`
+  - `docs/claude_patchE_status.md`
+- **Tests Passing**: Yes (import check)
+- **Breaking Changes**: None

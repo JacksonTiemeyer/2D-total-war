@@ -3,12 +3,10 @@
 This directory contains machine-friendly Markdown docs that describe the key scripts in the codebase. Claude Code uses these docs to quickly understand data structures, APIs, and interactions when planning and executing changes.
 
 - Patch A: Combat Engine scaffolding (done)
-- Patch B: Core engine implementation (to come)
-- Patch A: Combat Engine scaffolding (done)
-- Patch B: Core engine implementation (to come)
-- Patch C: AI Engine scaffolding (to come)
-- Patch D: Siege Engine scaffolding (to come)
-- Patch E: Veterancy/XP scaffolding (to come)
+- Patch B: Core engine implementation (done)
+- Patch C: AI Engine scaffolding (done)
+- Patch D: Siege Engine scaffolding (done)
+- Patch E: Veterancy/XP scaffolding (done)
 - Battle
 - Campaign
 - Misc
@@ -32,3 +30,12 @@ Usage hints for Claude Code:
 - Look at Interaction Surface to see how modules communicate.
 
 Index generated for Patch A: CombatEngine scaffolding and BattleScene bridge.
+
+## Combat Subsystem Refactor — Patch Index
+
+| Patch | Name | Engine File | Context Doc | Status Doc |
+|-------|------|-------------|-------------|------------|
+| B | CombatEngine Core | `battle/engine.py` | [CLAUDE_PATCHB.md](CLAUDE_PATCHB.md) | [claude_patchB_status.md](claude_patchB_status.md) |
+| C | AIEngine Scaffolding | `battle/ai_engine.py` | [CLAUDE_PATCHC.md](CLAUDE_PATCHC.md) | [claude_patchC_status.md](claude_patchC_status.md) |
+| D | SiegeEngine Scaffolding | `battle/siege_engine.py` | [CLAUDE_PATCHD.md](CLAUDE_PATCHD.md) | [claude_patchD_status.md](claude_patchD_status.md) |
+| E | VeterancyEngine Scaffolding | `battle/veterancy_engine.py` | [CLAUDE_PATCHE.md](CLAUDE_PATCHE.md) | [claude_patchE_status.md](claude_patchE_status.md) |

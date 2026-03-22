@@ -1,23 +1,32 @@
-"""AI engine scaffolding (Patch C).
+"""AIEngine - pluggable AI surface for battle and campaign decisions.
 
-This module defines a pluggable AI engine interface that can drive a
-combat/ battle's AI decisions. Patch C will evolve ArmyAI into a full AI
-engine, but for now this provides a stable, testable surface for Claude
-Code to implement and swap in later patches.
+Scaffolding for future replacement/augmentation of ArmyAI and
+BattleScene._enemy_ai(). Mirrors the personality-driven, priority-based
+pattern from campaign/ai_controller.py.
 """
-
-from typing import List, Optional
 
 
 class AIEngine:
-    def __init__(self, army, personality: Optional[str] = None):
-        self.army = army
-        self.personality = personality or "balanced"
+    """Pluggable AI engine for army decision-making."""
 
-    def update(self, armies: List[object], settlements: List[object], diplomacy: object):
-        """Compute and emit orders for this AI army.
+    def __init__(self, army, personality=None):
+        """Initialize AI engine for an army.
 
-        Currently a no-op placeholder to establish a contract for future patches.
-        Return value is intentionally None to preserve backward compatibility.
+        Args:
+            army: The army this AI controls.
+            personality: Optional personality string (e.g. 'aggressive', 'cautious').
         """
-        return None
+        self.army = army
+        self.personality = personality
+
+    def update(self, armies, settlements, diplomacy):
+        """Evaluate priorities and issue orders.
+
+        Args:
+            armies: List of all armies on the map.
+            settlements: List of all settlements.
+            diplomacy: Diplomacy state object.
+
+        No-op placeholder — future patches will implement priority evaluation.
+        """
+        pass

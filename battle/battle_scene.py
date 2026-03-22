@@ -108,6 +108,9 @@ class BattleScene:
         if companions:
             self._deploy_companions(companions)
 
+        # Combat engine (Patch B) — opt-in bridge for future migration
+        self._combat_engine = None
+
         # Wire up generals' enemy general references (for Challenge ability)
         for g in self.player_generals:
             g._all_enemy_generals = self.enemy_generals
@@ -1042,6 +1045,10 @@ class BattleScene:
             g.update(self.enemy_squads, self.player_squads)
 
         self._enemy_ai()
+
+        # Patch B: guarded combat engine step (no-op until engine is wired)
+        if self._combat_engine is not None:
+            self._combat_engine.step()
 
         # Sound triggers: charge impact and rout
         audio = get_audio()
