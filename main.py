@@ -161,6 +161,12 @@ class Game:
                     if intim > 0:
                         for sq in self.battle.enemy_squads:
                             sq.morale = max(0, sq.morale - intim)
+                    # Apply heroic victory morale buff from previous battle
+                    victory_buff = getattr(self.campaign, '_heroic_victory_buff', 0)
+                    if victory_buff > 0:
+                        for sq in self.battle.player_squads:
+                            sq.apply_morale_modifier(victory_buff)
+                        self.campaign._heroic_victory_buff = 0
                 self.state = GameState.BATTLE
             elif event.key == pygame.K_ESCAPE or event.key == pygame.K_r:
                 # Retreat - move player away (clamped to map bounds)
@@ -312,6 +318,15 @@ class Game:
             stats["mvp"] = mvp["name"] if mvp["kills"] > 0 else None
         else:
             stats["mvp"] = None
+
+        # Detect heroic victory (won against a numerically superior force)
+        if stats["result"] == BattleResult.PLAYER_WIN:
+            enemy_initial = sum(sq["initial"] for sq in stats["enemy_squads"])
+            player_initial = sum(sq["initial"] for sq in stats["player_squads"])
+            stats["heroic_victory"] = enemy_initial > player_initial
+        else:
+            stats["heroic_victory"] = False
+
         self.battle_stats = stats
 
     def _resolve_battle(self):
@@ -325,6 +340,15 @@ class Game:
 
         # Award post-battle XP to generals (A6: XP only on battle completion)
         self._award_post_battle_xp()
+
+        # Heroic Victory morale buff for next battle
+        if self.battle.result == BattleResult.PLAYER_WIN:
+            heroic = self.battle_stats.get("heroic_victory", False)
+            buff = 20 if heroic else 10
+            self.campaign._heroic_victory_buff = buff
+            if heroic:
+                self.campaign._add_notification(
+                    "HEROIC VICTORY! +20 morale for your next battle!")
 
         gm = self.campaign.general_manager
 
@@ -598,16 +622,26 @@ class Game:
 
         # Title
         is_win = s["result"] == BattleResult.PLAYER_WIN
-        title_text = "VICTORY!" if is_win else "DEFEAT"
+        is_heroic = s.get("heroic_victory", False)
+        if is_heroic:
+            title_text = "HEROIC VICTORY!"
+        elif is_win:
+            title_text = "VICTORY!"
+        else:
+            title_text = "DEFEAT"
         title_color = GOLD if is_win else (200, 50, 50)
         title = font.render(title_text, True, title_color)
         self.screen.blit(title, (SCREEN_WIDTH // 2 - title.get_width() // 2, 30))
+        if is_heroic:
+            buff_text = med.render("+20 Morale for next battle!", True, GOLD)
+            self.screen.blit(buff_text, (SCREEN_WIDTH // 2 - buff_text.get_width() // 2, 75))
 
         # Duration
+        dur_y = 100 if is_heroic else 80
         mins = s["duration_frames"] // (60 * 60)
         secs = (s["duration_frames"] // 60) % 60
         dur = small.render(f"Battle Duration: {mins:02d}:{secs:02d}", True, (160, 160, 160))
-        self.screen.blit(dur, (SCREEN_WIDTH // 2 - dur.get_width() // 2, 80))
+        self.screen.blit(dur, (SCREEN_WIDTH // 2 - dur.get_width() // 2, dur_y))
 
         # Two columns
         col_left = 60

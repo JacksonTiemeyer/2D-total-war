@@ -25,6 +25,7 @@ from core.settings import (
     COLLISION_ENGAGE_RADIUS,
     HILL_CHARGE_DOWNHILL_BONUS, HILL_SPEED_UPHILL_PENALTY,
     CHARGE_WINDOW_FRAMES,
+    COHESION_LIMIT, MASSIVE_VISUAL_SCALE,
 )
 from core.utils import distance, angle_between, normalize, clamp, get_font
 from battle.soldier import Soldier
@@ -217,6 +218,21 @@ class Squad:
         for s, (ox, oy) in zip(alive, offsets):
             s.formation_x = ox
             s.formation_y = oy
+
+    def _check_cohesion(self):
+        """Auto-reform if any soldier strays beyond COHESION_LIMIT from center."""
+        if self.state in (SquadState.ROUTED, SquadState.BROKEN):
+            return
+        alive = self.alive_soldiers
+        if not alive:
+            return
+        cx, cy = self.x, self.y
+        max_dist = max(distance(s.x, s.y, cx, cy) for s in alive)
+        if max_dist > COHESION_LIMIT:
+            self._reposition_formation()
+            for s in alive:
+                s.x = cx + s.formation_x
+                s.y = cy + s.formation_y
 
     @property
     def alive_soldiers(self):
@@ -476,6 +492,9 @@ class Squad:
         cx, cy = self.center
         self.x, self.y = cx, cy
 
+        # Cohesion anchor: reform if any soldier strays too far
+        self._check_cohesion()
+
     def _update_exhaustion(self):
         """Increase exhaustion based on current activity and movement mode."""
         # Constructs don't tire
@@ -645,6 +664,19 @@ class Squad:
                             self.kills += 1
                             self.target_squad._dying_soldiers.append(best)
                             self.target_squad.on_casualty()
+                        # Massive unit splash: damage nearby enemies
+                        if self.is_massive:
+                            from data.traits import MASSIVE_AREA_ATTACK_RADIUS
+                            splash_dmg = dmg * 0.3
+                            for es2 in self.target_squad.alive_soldiers:
+                                if es2 is best or not es2.alive:
+                                    continue
+                                if distance(best.x, best.y, es2.x, es2.y) < MASSIVE_AREA_ATTACK_RADIUS:
+                                    es2.take_damage(splash_dmg, self.unit_stats.armor_penetration)
+                                    if not es2.alive:
+                                        self.kills += 1
+                                        self.target_squad._dying_soldiers.append(es2)
+                                        self.target_squad.on_casualty()
                 else:
                     # Move toward enemy
                     nx, ny = normalize(best.x - s.x, best.y - s.y)
@@ -871,7 +903,10 @@ class Squad:
         # Draw dying soldiers (fade out)
         for s in self._dying_soldiers:
             sx, sy = camera.world_to_screen(s.x, s.y)
-            r = max(1, int(camera.scale(SOLDIER_RADIUS) * s.death_alpha))
+            base_r = camera.scale(SOLDIER_RADIUS)
+            if self.is_massive:
+                base_r *= MASSIVE_VISUAL_SCALE
+            r = max(1, int(base_r * s.death_alpha))
             alpha = int(255 * s.death_alpha)
             if r > 0 and alpha > 0:
                 c = tuple(int(ch * 0.3) for ch in color)
@@ -882,6 +917,8 @@ class Squad:
         for s in self.alive_soldiers:
             sx, sy = camera.world_to_screen(s.x, s.y)
             r = camera.scale(SOLDIER_RADIUS)
+            if self.is_massive:
+                r *= MASSIVE_VISUAL_SCALE
             hp_ratio = s.health / s.max_health
             if s.hit_flash_timer > 0:
                 c = (255, 255, 255)
@@ -955,7 +992,8 @@ class Squad:
             screen_pos = camera.world_to_screen(bbox[0], bbox[1])
             w = int(camera.scale(bbox[2]))
             h = int(camera.scale(bbox[3]))
-            pygame.draw.rect(surface, light_color, (*screen_pos, w, h), 2)
+            thickness = 3 if self.is_massive else 2
+            pygame.draw.rect(surface, light_color, (*screen_pos, w, h), thickness)
 
         # Bars above squad: morale + exhaustion
         cx, cy = self.center

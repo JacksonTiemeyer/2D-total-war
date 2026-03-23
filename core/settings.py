@@ -199,6 +199,10 @@ FORMATION_COLUMN_COLS_RATIO = 0.3    # deeper than wide
 FORMATION_SQUARE_COLS_RATIO = 1.0    # equal
 FORMATION_LOOSE_SPACING_MULT = 1.8   # wider spacing
 FORMATION_WEDGE_ANGLE = 0.6          # radians, half-angle of V
+COHESION_LIMIT = 20                  # max stray distance before auto-reform
+
+# Massive unit visual scale
+MASSIVE_VISUAL_SCALE = 1.8           # soldier radius multiplier for massive units
 
 # Weather Effects
 WEATHER_TYPES = ["clear", "rain", "fog", "mud", "wind"]
