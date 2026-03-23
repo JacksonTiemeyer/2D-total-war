@@ -86,6 +86,9 @@ def handle_deployment_event(scene, event):
     if event.type == pygame.KEYDOWN and (event.key == pygame.K_RETURN or event.key == pygame.K_SPACE):
         scene.deployment_phase = False
         scene._deploy_dragging = None
+        scene._right_click_pos = None
+        scene._right_dragging = False
+        scene._right_drag_pos = None
         get_audio().play("click")
         return
 
@@ -175,8 +178,6 @@ def apply_facing_from_drag(scene, release_pos):
     wx2, wy2 = scene.camera.screen_to_world(*release_pos)
     facing = angle_between(wx1, wy1, wx2, wy2)
     for sq in scene.selected_squads:
-        sq.facing_angle = facing
-        sq.give_move_order(wx1, wy1)
         sq.facing_angle = facing
 
 
