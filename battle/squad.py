@@ -529,6 +529,9 @@ class Squad:
 
         # Update visual effects
         self._update_effects()
+        # Resolve small internal collisions within the squad to prevent overlaps
+        # which can cause visual glitches like gliding or clustering.
+        self._resolve_internal_collisions()
 
         # Update squad position to center of living soldiers
         cx, cy = self.center
@@ -573,6 +576,33 @@ class Squad:
         for s in self.alive_soldiers:
             s.exhaustion = self.exhaustion
 
+    def _resolve_internal_collisions(self):
+        """Simple local collision resolution within the squad.
+        Push overlapping soldiers apart to avoid exact overlaps.
+        Uses COLLISION_ENGAGE_RADIUS as the minimum allowed spacing.
+        """
+        alive = self.alive_soldiers
+        n = len(alive)
+        if n < 2:
+            return
+        for i in range(n):
+            a = alive[i]
+            for j in range(i + 1, n):
+                b = alive[j]
+                dx = b.x - a.x
+                dy = b.y - a.y
+                dist = math.hypot(dx, dy)
+                min_dist = COLLISION_ENGAGE_RADIUS
+                if dist > 0 and dist < min_dist:
+                    ux = dx / dist
+                    uy = dy / dist
+                    overlap = min_dist - dist
+                    shift = overlap * 0.5
+                    a.x -= ux * shift
+                    a.y -= uy * shift
+                    b.x += ux * shift
+                    b.y += uy * shift
+
     def _do_movement(self, speed_mult=1.0):
         dx = self.target_x - self.x
         dy = self.target_y - self.y
@@ -581,6 +611,8 @@ class Squad:
             self.state = SquadState.IDLE
             return
         nx, ny = normalize(dx, dy)
+        # Align squad facing with movement direction for visual consistency
+        self.facing_angle = angle_between(self.x, self.y, self.target_x, self.target_y)
         speed = self.effective_speed * speed_mult
         for s in self.alive_soldiers:
             rox, roy = self._rotate_offset(s.formation_x, s.formation_y)
@@ -680,6 +712,11 @@ class Squad:
         _, target_def_form, _, _, _ = self.target_squad.formation_mods
         def_mult *= target_def_form
 
+        # Melee engagement: prefer formation-preserving movement
+        should_mass_move = False
+        mass_move_target = None
+        attacked_this_frame = False
+
         for s in self.alive_soldiers:
             if s.attack_cooldown > 0:
                 continue
@@ -720,11 +757,17 @@ class Squad:
                                         self.kills += 1
                                         self.target_squad._dying_soldiers.append(es2)
                                         self.target_squad.on_casualty()
+                    attacked_this_frame = True
                 else:
-                    # Move toward enemy
-                    nx, ny = normalize(best.x - s.x, best.y - s.y)
-                    s.x += nx * self.effective_speed
-                    s.y += ny * self.effective_speed
+                    # Register intent to mass-move toward enemy center if we can't attack this frame
+                    should_mass_move = True
+                    mass_move_target = self.target_squad.center
+
+        # After evaluating all soldiers, perform a formation-preserving movement if planned
+        if should_mass_move and mass_move_target is not None and not attacked_this_frame:
+            self.target_x, self.target_y = mass_move_target
+            self.facing_angle = angle_between(self.x, self.y, self.target_x, self.target_y)
+            self._do_movement()
 
     def _do_ranged(self, all_squads):
         if not self.target_squad or self.target_squad.is_destroyed:
