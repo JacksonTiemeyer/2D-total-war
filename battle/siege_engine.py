@@ -26,9 +26,8 @@ class SiegeEngine:
         No-op placeholder — future patches will migrate wall collision,
         gate destruction, and tower firing from SiegeScene._tick().
         """
-        # No-op for scaffolding; Patch D will wire real logic here
         return None
 
-    # Compatibility shim: some patches call tick() instead of step()
     def tick(self, *args, **kwargs):
+        """Compatibility alias — delegates to step()."""
         return self.step()

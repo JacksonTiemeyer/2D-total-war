@@ -10,6 +10,9 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from battle.engine import CombatEngine
+from battle.ai_engine import AIEngine
+from battle.siege_engine import SiegeEngine
+from battle.veterancy_engine import VeterancyEngine
 
 
 class MockSquad:
@@ -91,12 +94,68 @@ def test_multiple_ticks():
     assert gen.update_count == 5, f"Expected 5, got {gen.update_count}"
 
 
+def test_ai_engine_called():
+    """Verify step() calls ai_engine.update() when wired."""
+    ai = AIEngine(army=[], personality='aggressive')
+    ai._called = False
+    _orig = ai.update
+
+    def _track(*a, **kw):
+        ai._called = True
+        return _orig(*a, **kw)
+
+    ai.update = _track
+    engine = CombatEngine([], [], [], [], ai_engine=ai)
+    engine.step()
+    assert ai._called, "AIEngine.update() should have been called"
+
+
+def test_siege_engine_tick_compat():
+    """Verify SiegeEngine.tick() delegates to step()."""
+    se = SiegeEngine()
+    se._stepped = False
+    _orig = se.step
+
+    def _track():
+        se._stepped = True
+        return _orig()
+
+    se.step = _track
+    se.tick()
+    assert se._stepped, "tick() should delegate to step()"
+
+
+def test_full_composition():
+    """Verify CombatEngine accepts all sub-engines without error."""
+    ai = AIEngine(army=[], personality=None)
+    se = SiegeEngine()
+    ve = VeterancyEngine()
+    sq = MockSquad()
+    gen = MockGeneral()
+    engine = CombatEngine([sq], [], [gen], [],
+                          ai_engine=ai, siege_engine=se,
+                          veterancy_engine=ve, terrain=[], weather='clear')
+    engine.step()
+    assert sq.update_count == 1
+    assert gen.update_count == 1
+
+    # Post-battle XP hook
+    class MockGen:
+        xp = 0
+    mg = MockGen()
+    engine.award_battle_xp(mg, 5)
+    assert mg.xp == 5, f"Expected 5, got {mg.xp}"
+
+
 ALL_TESTS = [
     test_step_updates_squads,
     test_step_skips_destroyed,
     test_step_updates_generals,
     test_step_returns_none,
     test_multiple_ticks,
+    test_ai_engine_called,
+    test_siege_engine_tick_compat,
+    test_full_composition,
 ]
 
 

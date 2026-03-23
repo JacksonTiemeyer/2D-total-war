@@ -14,6 +14,7 @@ Centralized siege battle logic scaffold for walls, gates, and towers.
 ```python
 SiegeEngine.__init__(self, walls=None, gates=None, towers=None)
 SiegeEngine.step(self) -> None
+SiegeEngine.tick(self) -> None  # compatibility alias, delegates to step()
 ```
 
 ## Core Data Structures
@@ -23,6 +24,7 @@ SiegeEngine.step(self) -> None
 
 ## Notable Algorithms/Patterns
 - `step()` naming matches CombatEngine convention
+- `tick()` compatibility alias delegates to `step()` for callers expecting tick-style API
 - Constructor accepts optional lists for incremental wiring
 
 ## Interaction Surface
@@ -37,6 +39,7 @@ SiegeEngine.step(self) -> None
 
 ## Testing Notes
 - Import test: `python -c "from battle.siege_engine import SiegeEngine"`
+- Smoke test: `test_siege_engine_tick_compat` in `tests/patchb_smoke_test.py`
 
 ## Migration/Extension Notes
 - Future: move wall collision, gate HP, tower auto-fire from SiegeScene._tick()

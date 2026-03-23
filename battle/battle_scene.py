@@ -30,6 +30,7 @@ from battle.squad import Squad, SquadState, Formation
 from battle.general import General, DuelState
 from core.audio import get_audio
 from battle.engine import CombatEngine
+from battle.ai_engine import AIEngine
 
 
 class BattleResult:
@@ -119,6 +120,7 @@ class BattleScene:
 
         # Patch A: initialize combat engine scaffold after armies and generals are deployed
         try:
+            self._ai_engine = AIEngine(army=self.enemy_squads, personality=None)
             self._combat_engine = CombatEngine(
                 player_squads=self.player_squads,
                 enemy_squads=self.enemy_squads,
@@ -126,9 +128,7 @@ class BattleScene:
                 enemy_generals=self.enemy_generals,
                 terrain=self.terrain,
                 weather=self.weather,
-                ai_engine=None,
-                siege_engine=None,
-                veterancy_engine=None,
+                ai_engine=self._ai_engine,
             )
         except Exception:
             self._combat_engine = None

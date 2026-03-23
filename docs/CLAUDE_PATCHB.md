@@ -13,9 +13,10 @@ Centralized per-tick combat orchestration engine that mirrors BattleScene._tick(
 ## Public API Surface
 ```python
 CombatEngine.__init__(self, player_squads, enemy_squads, player_generals, enemy_generals,
-                      terrain=None, weather=None,
-                      ai_engine=None, siege_engine=None, veterancy_engine=None)
+                      terrain=None, weather=None, siege_engine=None,
+                      veterancy_engine=None, ai_engine=None)
 CombatEngine.step(self) -> None
+CombatEngine.award_battle_xp(self, general, amount) -> None
 ```
 
 ## How to Verify
@@ -36,6 +37,8 @@ python -c "import main; print('import OK')"
 
 ## Notable Algorithms/Patterns
 - `step()` iterates all squads, skipping destroyed ones, then updates all generals
+- `step()` delegates to ai_engine.update(), siege_engine.step(), if wired
+- `award_battle_xp()` delegates to veterancy_engine post-battle
 - Non-breaking: BattleScene._tick() continues to run its own logic; engine is additive
 - Guard pattern: `if self._combat_engine is not None: self._combat_engine.step()`
 
@@ -50,7 +53,9 @@ python -c "import main; print('import OK')"
 - Returns None to maintain API compatibility
 
 ## Testing Notes
-- `tests/patchb_smoke_test.py` — 5 tests using MockSquad/MockGeneral (no pygame)
+- `tests/patchb_smoke_test.py` — 8 tests using MockSquad/MockGeneral (no pygame)
+  - 5 core tests: step updates, skip destroyed, generals, returns None, multiple ticks
+  - 3 integration tests: ai_engine called, siege tick() compat, full composition
 - `tests/patchb_smoke_run.py` — Standalone runner
 
 ## Performance Considerations
