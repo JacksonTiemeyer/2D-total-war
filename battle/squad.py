@@ -26,6 +26,9 @@ from core.settings import (
     HILL_CHARGE_DOWNHILL_BONUS, HILL_SPEED_UPHILL_PENALTY,
     CHARGE_WINDOW_FRAMES,
     COHESION_LIMIT, MASSIVE_VISUAL_SCALE,
+    FPS, SPELL_ICON_SIZE, SPELL_RANGE_INDICATOR_COLOR,
+    SPELL_AOE_DEFAULT_RADIUS, MANA_BAR_COLOR, MANA_BAR_LOW_COLOR,
+    GOLD,
 )
 from core.utils import distance, angle_between, normalize, clamp, get_font
 from battle.soldier import Soldier
@@ -153,6 +156,16 @@ class Squad:
         # Track for morale
         self.initial_count = len(self.soldiers)
         self.kills = 0
+
+        # Mana / Spellcasting
+        self.max_mana = getattr(unit_stats, 'max_mana', 0)
+        self.mana = self.max_mana
+        self.mana_regen = getattr(unit_stats, 'mana_regen', 0.0)
+        self.spell_cooldowns = {}  # {spell.name: remaining_frames}
+        self.active_buffs = {}  # {buff_name: remaining_frames}
+        self._spell_targeting = False  # True when player is aiming a spell
+        self._spell_targeting_spell = None  # which spell is being aimed
+        self._selected_spell_index = 0  # currently selected spell slot
 
     def _create_formation(self, stats, count=None):
         if count is None:
@@ -393,6 +406,22 @@ class Squad:
         for s in self.alive_soldiers:
             s.update()
             s.facing_angle = self.facing_angle
+
+        # Mana regeneration
+        if self.max_mana > 0 and self.mana < self.max_mana:
+            self.mana = min(self.max_mana, self.mana + self.mana_regen / FPS)
+
+        # Tick spell cooldowns
+        for sname in list(self.spell_cooldowns):
+            self.spell_cooldowns[sname] = max(0, self.spell_cooldowns[sname] - 1)
+            if self.spell_cooldowns[sname] <= 0:
+                del self.spell_cooldowns[sname]
+
+        # Tick active buffs
+        for bname in list(self.active_buffs):
+            self.active_buffs[bname] = max(0, self.active_buffs[bname] - 1)
+            if self.active_buffs[bname] <= 0:
+                del self.active_buffs[bname]
 
         # Exhaustion tick
         self._update_exhaustion()
@@ -826,6 +855,114 @@ class Squad:
         for s in self.alive_soldiers:
             s.exhaustion = self.exhaustion
 
+    # ── Spellcasting ────────────────────────────────────────────────
+
+    @property
+    def available_spells(self):
+        """Return Spell objects from unit_stats.spell_list."""
+        return list(getattr(self.unit_stats, 'spell_list', ()))
+
+    def can_cast(self, spell):
+        """Check if the squad can cast this spell right now."""
+        if self.max_mana <= 0:
+            return False
+        if self.mana < spell.mana_cost:
+            return False
+        if self.spell_cooldowns.get(spell.name, 0) > 0:
+            return False
+        if self.is_destroyed:
+            return False
+        return True
+
+    def cast_spell(self, spell, target_squad=None, target_pos=None,
+                   all_squads=None):
+        """Attempt to cast a spell. Returns True if successful."""
+        if not self.can_cast(spell):
+            return False
+
+        self.mana -= spell.mana_cost
+        self.spell_cooldowns[spell.name] = int(spell.cooldown_seconds * FPS)
+
+        # Apply effect based on type
+        if spell.effect_type == "damage":
+            self._apply_spell_damage(spell, target_squad, target_pos, all_squads)
+        elif spell.effect_type == "buff":
+            target = self if spell.targeting == "self" else target_squad
+            if target:
+                self._apply_spell_buff(spell, target)
+        elif spell.effect_type == "debuff":
+            if target_squad:
+                self._apply_spell_debuff(spell, target_squad)
+
+        # Spawn visual effect
+        fx_pos = target_pos
+        if not fx_pos and target_squad:
+            fx_pos = (target_squad.x, target_squad.y)
+        if not fx_pos:
+            fx_pos = (self.x, self.y)
+        self._spawn_spell_visual(spell, fx_pos)
+
+        return True
+
+    def _apply_spell_damage(self, spell, target_squad, target_pos, all_squads):
+        """Apply damage spell to target squad or area."""
+        targets = []
+        if spell.targeting == "area" and target_pos and all_squads:
+            # AOE: damage all enemy squads in radius
+            radius = spell.aoe_radius or SPELL_AOE_DEFAULT_RADIUS
+            for sq in all_squads:
+                if sq.team == self.team or sq.is_destroyed:
+                    continue
+                d = distance(target_pos[0], target_pos[1], sq.x, sq.y)
+                if d < radius:
+                    targets.append(sq)
+        elif target_squad and not target_squad.is_destroyed:
+            targets.append(target_squad)
+
+        for sq in targets:
+            soldiers_hit = sq.alive_soldiers[:min(8, len(sq.alive_soldiers))]
+            for s in soldiers_hit:
+                s.take_damage(spell.damage, armor_penetration=80,
+                              damage_type=spell.damage_type)
+                if not s.alive:
+                    sq._dying_soldiers.append(s)
+                    sq.on_casualty()
+
+    def _apply_spell_buff(self, spell, target):
+        """Apply a buff to the target squad."""
+        duration = int(spell.duration_seconds * FPS) if spell.duration_seconds else 300
+        target.active_buffs[spell.name] = duration
+        # Heal effect
+        if spell.heal > 0:
+            for s in target.alive_soldiers:
+                s.health = min(s.max_health, s.health + spell.heal)
+
+    def _apply_spell_debuff(self, spell, target_squad):
+        """Apply a debuff to the target squad."""
+        duration = int(spell.duration_seconds * FPS) if spell.duration_seconds else 300
+        target_squad.active_buffs[spell.name] = duration
+        # Morale debuffs
+        if "Dread" in spell.name or "Curse" in spell.name:
+            target_squad.apply_morale_modifier(-15)
+
+    def _spawn_spell_visual(self, spell, pos):
+        """Queue a visual effect for the spell cast."""
+        # Reuse existing visual_effects system with spell type
+        school_colors = {
+            "fire": (255, 100, 30), "ice": (100, 200, 255),
+            "heavens": (200, 200, 255), "shadow": (100, 0, 150),
+            "death": (50, 200, 50), "life": (100, 255, 100),
+            "beasts": (180, 140, 60), "metal": (200, 200, 150),
+        }
+        color = school_colors.get(spell.school, (200, 200, 255))
+        self.visual_effects.append({
+            "type": "spell_burst",
+            "x": pos[0], "y": pos[1],
+            "color": color,
+            "radius": spell.aoe_radius or 30,
+            "timer": 30, "max_timer": 30,
+        })
+
     def get_bounding_box(self):
         alive = self.alive_soldiers
         if not alive:
@@ -960,6 +1097,21 @@ class Squad:
                 pygame.draw.line(surface, (180, 160, 80),
                                  (trail_x, trail_y), (cx, cy), 1)
 
+        # Spell burst effects
+        for e in self.visual_effects:
+            if e["type"] == "spell_burst":
+                progress = 1.0 - e["timer"] / e["max_timer"]
+                ex, ey = camera.world_to_screen(e["x"], e["y"])
+                sr = int(camera.scale(e["radius"]) * (0.3 + 0.7 * progress))
+                alpha = int(200 * (1 - progress))
+                if sr > 0 and alpha > 0:
+                    burst_surf = pygame.Surface((sr * 2, sr * 2), pygame.SRCALPHA)
+                    c = e["color"]
+                    pygame.draw.circle(burst_surf, (*c, alpha), (sr, sr), sr)
+                    pygame.draw.circle(burst_surf, (*c, min(255, alpha + 50)),
+                                       (sr, sr), sr, max(1, camera.scale(2)))
+                    surface.blit(burst_surf, (int(ex - sr), int(ey - sr)))
+
         # Braced indicator - spear icon (small lines pointing outward)
         if self.is_braced:
             cx, cy = self.center
@@ -1017,6 +1169,14 @@ class Squad:
         morale_color = (50, 200, 50) if self.morale > 50 else (
             (220, 200, 50) if self.morale > 25 else (200, 50, 50))
         pygame.draw.rect(surface, morale_color, (bar_x, bar_y, morale_w, bar_h))
+
+        # Mana bar (blue, below morale)
+        if self.max_mana > 0:
+            mana_y = scy - camera.scale(20)
+            pygame.draw.rect(surface, (30, 30, 60), (bar_x, mana_y, bar_w, bar_h))
+            mana_w = int(bar_w * self.mana / self.max_mana)
+            mc = MANA_BAR_COLOR if self.mana / self.max_mana > 0.3 else MANA_BAR_LOW_COLOR
+            pygame.draw.rect(surface, mc, (bar_x, mana_y, mana_w, bar_h))
 
         # Squad name and count
         if camera.zoom > 0.5:
@@ -1090,3 +1250,54 @@ class Squad:
                 pygame.draw.polygon(cone_surf, (*light_color, 35), pts)
                 pygame.draw.lines(cone_surf, (*light_color, 80), True, pts, 1)
                 surface.blit(cone_surf, (int(scx - r - 2), int(scy - r - 2)))
+
+        # Spell icons (when selected and has spells)
+        spells = self.available_spells
+        if self.selected and spells and camera.zoom > 0.35:
+            icon_s = SPELL_ICON_SIZE
+            total_w = len(spells) * (icon_s + 2)
+            ix = int(scx - total_w // 2)
+            iy = int(scy + camera.scale(25))
+            for i, spell in enumerate(spells):
+                school_colors = {
+                    "fire": (180, 60, 20), "ice": (60, 120, 200),
+                    "heavens": (100, 100, 200), "shadow": (80, 0, 120),
+                    "death": (30, 120, 30), "life": (60, 180, 60),
+                    "beasts": (140, 110, 40), "metal": (160, 160, 120),
+                }
+                bg = school_colors.get(spell.school, (80, 80, 120))
+                rect = pygame.Rect(ix + i * (icon_s + 2), iy, icon_s, icon_s)
+                pygame.draw.rect(surface, bg, rect)
+                # Selected spell highlight
+                border_c = GOLD if i == self._selected_spell_index else (120, 120, 140)
+                pygame.draw.rect(surface, border_c, rect, 2)
+                # Cooldown overlay
+                cd = self.spell_cooldowns.get(spell.name, 0)
+                if cd > 0:
+                    cd_h = int(icon_s * cd / (spell.cooldown_seconds * FPS))
+                    cd_rect = pygame.Rect(rect.x, rect.bottom - cd_h, icon_s, cd_h)
+                    cd_surf = pygame.Surface((icon_s, cd_h), pygame.SRCALPHA)
+                    cd_surf.fill((0, 0, 0, 140))
+                    surface.blit(cd_surf, cd_rect.topleft)
+                # Mana cost
+                sfont = get_font(max(9, int(icon_s * 0.45)))
+                cost_t = sfont.render(str(spell.mana_cost), True,
+                                      (200, 200, 255) if self.mana >= spell.mana_cost
+                                      else (255, 80, 80))
+                surface.blit(cost_t, (rect.right - cost_t.get_width() - 1,
+                                      rect.bottom - cost_t.get_height()))
+                # Spell initial letter
+                letter = sfont.render(spell.name[0], True, (255, 255, 255))
+                surface.blit(letter, (rect.x + 2, rect.y + 1))
+
+        # Spell targeting range indicator
+        if self._spell_targeting and self._spell_targeting_spell:
+            sp = self._spell_targeting_spell
+            r_range = int(camera.scale(sp.range_distance))
+            if r_range > 0:
+                range_surf = pygame.Surface((r_range * 2, r_range * 2), pygame.SRCALPHA)
+                pygame.draw.circle(range_surf, SPELL_RANGE_INDICATOR_COLOR,
+                                   (r_range, r_range), r_range)
+                pygame.draw.circle(range_surf, (0, 150, 255, 160),
+                                   (r_range, r_range), r_range, 1)
+                surface.blit(range_surf, (int(scx - r_range), int(scy - r_range)))

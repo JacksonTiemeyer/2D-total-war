@@ -4,6 +4,20 @@ Phase 3: Full fantasy roster — 100+ units across 13 races.
 Legacy medieval units kept as Human roster.
 """
 
+from data.spells import (
+    ALL_SPELLS, LIGHTNING_BOLT, CHAIN_LIGHTNING, COMET, WIND_BLAST,
+    FROST_BOLT, BLIZZARD, SHADOW_BOLT, DREAD, CLOAK_OF_SHADOWS, SOUL_DRAIN,
+    FIREBALL, INFERNO, FLAME_WALL, BLAZING_SWORD,
+    RAISE_DEAD, SPIRIT_LEECH, CURSE_OF_YEARS, WIND_OF_DEATH,
+    ENCHANT_ARMOR, SEARING_DOOM, TRANSMUTATION, RUNE_OF_WRATH,
+    SUMMON_WOLVES, WILD_FURY,
+)
+
+
+def _resolve_spell_list(spell_names):
+    """Convert a tuple of spell name strings to Spell objects."""
+    return tuple(ALL_SPELLS[n] for n in spell_names if n in ALL_SPELLS)
+
 
 class UnitStats:
     """Stats for an individual soldier within a squad.
@@ -31,7 +45,10 @@ class UnitStats:
                  damage_vulnerabilities=(),
                  damage_immunities=(),
                  spell_school="",
-                 spell_list=()):
+                 spell_list=(),
+                 # ── Mana / Casting ──
+                 max_mana=0,
+                 mana_regen=0.0):
         self.name = name
         self.health = health
         self.melee_attack = melee_attack
@@ -63,6 +80,11 @@ class UnitStats:
         self.damage_immunities = tuple(damage_immunities)
         self.spell_school = spell_school
         self.spell_list = tuple(spell_list)
+
+        # ── Mana / Casting ──
+        self.max_mana = max_mana
+        self.mana = max_mana  # start full
+        self.mana_regen = mana_regen  # per second
 
         # Legacy compatibility: derive old flags from traits if traits are set,
         # otherwise use the explicit parameters
@@ -224,7 +246,8 @@ HE_MAGE_APPRENTICES = UnitStats(
     damage_type="magical", magic_resistance=25,
     armor_penetration=5, ranged_armor_penetration=10,
     exhaustion_rate=0.8, mass=1.0,
-    spell_school="heavens", spell_list=("Lightning Bolt",),
+    spell_school="heavens", spell_list=(LIGHTNING_BOLT,),
+    max_mana=30, mana_regen=3.0,
     description="Young mages. Arcane bolts bypass physical armor.",
 )
 
@@ -272,7 +295,8 @@ HE_ARCHMAGE = UnitStats(
     damage_type="magical", magic_resistance=50,
     armor_penetration=10, ranged_armor_penetration=20,
     exhaustion_rate=0.8, mass=1.0,
-    spell_school="heavens", spell_list=("Lightning Bolt", "Chain Lightning", "Comet", "Wind Blast"),
+    spell_school="heavens", spell_list=(LIGHTNING_BOLT, CHAIN_LIGHTNING, COMET, WIND_BLAST),
+    max_mana=80, mana_regen=5.0,
     description="Master of the arcane. Devastating magical artillery.",
 )
 
@@ -400,7 +424,8 @@ SE_TIDE_CALLERS = UnitStats(
     damage_type="ice", magic_resistance=20,
     armor_penetration=5, ranged_armor_penetration=10,
     exhaustion_rate=0.8, mass=1.0,
-    spell_school="ice", spell_list=("Frost Bolt",),
+    spell_school="ice", spell_list=(FROST_BOLT,),
+    max_mana=30, mana_regen=3.0,
     description="Water mages. Ice bolts slow and shatter.",
 )
 
@@ -436,7 +461,8 @@ SE_STORM_MAGE = UnitStats(
     damage_type="magical", magic_resistance=40,
     armor_penetration=5, ranged_armor_penetration=15,
     exhaustion_rate=0.8, mass=1.0,
-    spell_school="heavens", spell_list=("Lightning Bolt", "Chain Lightning", "Wind Blast"),
+    spell_school="heavens", spell_list=(LIGHTNING_BOLT, CHAIN_LIGHTNING, WIND_BLAST),
+    max_mana=60, mana_regen=4.0,
     description="Master of storms. Chain lightning arcs between foes.",
 )
 
@@ -487,7 +513,8 @@ SNE_ICE_SHAMANS = UnitStats(
     damage_type="ice", damage_immunities=("ice",), magic_resistance=30,
     armor_penetration=5, ranged_armor_penetration=10,
     exhaustion_rate=0.8, mass=1.0,
-    spell_school="ice", spell_list=("Frost Bolt", "Blizzard"),
+    spell_school="ice", spell_list=(FROST_BOLT, BLIZZARD),
+    max_mana=40, mana_regen=3.5,
     description="Ice mages. Slow and shatter enemy formations.",
 )
 
@@ -600,7 +627,8 @@ DE_DARK_SORCERESS = UnitStats(
     damage_type="magical", magic_resistance=40,
     armor_penetration=5, ranged_armor_penetration=15,
     exhaustion_rate=0.8, mass=1.0,
-    spell_school="shadow", spell_list=("Shadow Bolt", "Dread", "Cloak of Shadows", "Soul Drain"),
+    spell_school="shadow", spell_list=(SHADOW_BOLT, DREAD, CLOAK_OF_SHADOWS, SOUL_DRAIN),
+    max_mana=60, mana_regen=4.0,
     description="Dark magic specialist. Debuffs and drains life.",
 )
 
@@ -696,7 +724,8 @@ DW_RUNESMITH = UnitStats(
     weapon_strength=16, armor_penetration=20,
     magic_resistance=50,
     exhaustion_rate=0.8, mass=2.0,
-    spell_school="metal", spell_list=("Enchant Armor", "Searing Doom", "Transmutation", "Rune of Wrath"),
+    spell_school="metal", spell_list=(ENCHANT_ARMOR, SEARING_DOOM, TRANSMUTATION, RUNE_OF_WRATH),
+    max_mana=50, mana_regen=3.0,
     description="Rune magic. Buffs armor, debuffs enemies. Highly resistant.",
 )
 
@@ -879,7 +908,8 @@ UD_NECROMANCER_LORD = UnitStats(
     damage_vulnerabilities=("holy",), damage_immunities=("poison",),
     armor_penetration=5, ranged_armor_penetration=15,
     exhaustion_rate=0.0, mass=1.0,
-    spell_school="death", spell_list=("Raise Dead", "Spirit Leech", "Curse of Years", "Wind of Death"),
+    spell_school="death", spell_list=(RAISE_DEAD, SPIRIT_LEECH, CURSE_OF_YEARS, WIND_OF_DEATH),
+    max_mana=80, mana_regen=5.0,
     description="Master of death. Raises the fallen, drains life.",
 )
 
@@ -1090,7 +1120,8 @@ GOB_SHAMAN = UnitStats(
     damage_type="magical",
     armor_penetration=5, ranged_armor_penetration=10,
     exhaustion_rate=0.8, mass=0.7, size_category="small",
-    spell_school="beasts", spell_list=("Summon Wolves", "Wild Fury"),
+    spell_school="beasts", spell_list=(SUMMON_WOLVES, WILD_FURY),
+    max_mana=25, mana_regen=2.5,
     description="Unpredictable magic. Might help, might blow up.",
 )
 
@@ -1140,7 +1171,8 @@ DEMON_PRINCE = UnitStats(
     weapon_strength=40, armor_penetration=35,
     damage_type="fire", damage_immunities=("fire", "poison"), magic_resistance=40,
     exhaustion_rate=0.0, mass=10.0, size_category="massive",
-    spell_school="fire", spell_list=("Fireball", "Inferno"),
+    spell_school="fire", spell_list=(FIREBALL, INFERNO),
+    max_mana=60, mana_regen=4.0,
     description="Winged destroyer. Fire magic, terror, near-invincible.",
 )
 
@@ -1165,7 +1197,8 @@ DEMON_PIT_FIEND = UnitStats(
     damage_type="fire", damage_immunities=("fire", "poison"), magic_resistance=50,
     armor_penetration=15, ranged_armor_penetration=20,
     exhaustion_rate=0.0, mass=3.0,
-    spell_school="fire", spell_list=("Fireball", "Flame Wall", "Inferno", "Blazing Sword"),
+    spell_school="fire", spell_list=(FIREBALL, FLAME_WALL, INFERNO, BLAZING_SWORD),
+    max_mana=70, mana_regen=5.0,
     description="Demon sorcerer. Summons lesser demons, devastating fire magic.",
 )
 

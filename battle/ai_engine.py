@@ -110,6 +110,11 @@ class AIEngine:
                         sq.give_move_order(sq.x + nx * approach_dist,
                                            sq.y + ny * approach_dist)
 
+        # --- Spellcaster squads: cast spells when able ---
+        for sq in alive_own:
+            if sq.max_mana > 0 and sq.available_spells:
+                self._ai_use_spells_squad(sq, alive_opponents, all_squads)
+
         # --- General AI ---
         # enemy_generals here are the generals controlled by this AI
         for g in enemy_generals:
@@ -117,6 +122,7 @@ class AIEngine:
                 continue
 
             self._use_general_abilities(g, self.army, alive_opponents)
+            self._ai_use_spells_general(g, self.army, alive_opponents)
 
             # Champion: seek duels
             if g.general_type == "Champion":
@@ -257,3 +263,94 @@ class AIEngine:
                 if targets:
                     general.activate_ability(idx, friendly, enemy)
                     return
+
+    def _ai_use_spells_squad(self, squad, enemies, all_squads):
+        """AI spell usage for spellcaster squads."""
+        for spell in squad.available_spells:
+            if not squad.can_cast(spell):
+                continue
+
+            if spell.effect_type == "damage":
+                # Find best enemy target in range
+                best = None
+                best_count = 0
+                for e in enemies:
+                    if e.is_destroyed:
+                        continue
+                    d = distance(squad.x, squad.y, e.x, e.y)
+                    if d < spell.range_distance:
+                        count = e.alive_count
+                        if count > best_count:
+                            best_count = count
+                            best = e
+                if best:
+                    squad.cast_spell(spell, target_squad=best,
+                                     target_pos=(best.x, best.y),
+                                     all_squads=all_squads)
+                    return
+
+            elif spell.effect_type == "buff" and spell.targeting == "self":
+                # Self-buff: cast when in combat or low health
+                if squad.state == SquadState.FIGHTING or squad.morale < 50:
+                    squad.cast_spell(spell, all_squads=all_squads)
+                    return
+
+            elif spell.effect_type == "debuff":
+                # Debuff nearest enemy
+                for e in enemies:
+                    if e.is_destroyed:
+                        continue
+                    d = distance(squad.x, squad.y, e.x, e.y)
+                    if d < spell.range_distance:
+                        squad.cast_spell(spell, target_squad=e,
+                                         all_squads=all_squads)
+                        return
+
+    def _ai_use_spells_general(self, general, friendly, enemy):
+        """AI spell usage for spellcaster generals."""
+        for spell in general.available_spells:
+            if not general.can_cast(spell):
+                continue
+
+            if spell.effect_type == "damage":
+                best = None
+                best_count = 0
+                for e in enemy:
+                    if e.is_destroyed:
+                        continue
+                    d = distance(general.x, general.y, e.x, e.y)
+                    if d < spell.range_distance:
+                        count = e.alive_count
+                        if count > best_count:
+                            best_count = count
+                            best = e
+                if best:
+                    general.cast_spell(spell, target_squad=best,
+                                       target_pos=(best.x, best.y),
+                                       friendly_squads=friendly,
+                                       enemy_squads=enemy)
+                    return
+
+            elif spell.effect_type == "buff":
+                # Buff nearest friendly squad that's fighting
+                for sq in friendly:
+                    if sq.is_destroyed:
+                        continue
+                    if sq.state == SquadState.FIGHTING:
+                        d = distance(general.x, general.y, sq.x, sq.y)
+                        if d < spell.range_distance:
+                            general.cast_spell(spell, target_squad=sq,
+                                               friendly_squads=friendly,
+                                               enemy_squads=enemy)
+                            return
+
+            elif spell.effect_type == "debuff":
+                for e in enemy:
+                    if e.is_destroyed:
+                        continue
+                    d = distance(general.x, general.y, e.x, e.y)
+                    if d < spell.range_distance:
+                        general.cast_spell(spell, target_squad=e,
+                                           friendly_squads=friendly,
+                                           enemy_squads=enemy)
+                        return

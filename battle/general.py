@@ -8,6 +8,8 @@ from core.settings import (
     DUEL_RANGE, DUEL_CIRCLE_RADIUS, DUEL_DURATION_MAX,
     MELEE_RANGE, MORALE_GENERAL_AURA, MORALE_GENERAL_DEATH_PENALTY,
     TEAM_COLORS, GOLD, WHITE, BLACK, YELLOW, ORANGE,
+    FPS, SPELL_ICON_SIZE, SPELL_RANGE_INDICATOR_COLOR,
+    SPELL_AOE_DEFAULT_RADIUS, MANA_BAR_COLOR, MANA_BAR_LOW_COLOR,
 )
 from core.utils import distance, angle_between, normalize, clamp, get_font
 from battle.soldier import Soldier
@@ -109,6 +111,20 @@ class General:
         self._iron_discipline_active = False
         self._cooldown_reduction = 0  # percentage reduction from passives (Mage Lord, Master Engineer)
 
+        # Mana / Spellcasting
+        self.max_mana = getattr(unit_stats, 'max_mana', 0)
+        self.mana = self.max_mana
+        self.mana_regen = getattr(unit_stats, 'mana_regen', 0.0)
+        self.spell_cooldowns = {}  # {spell.name: remaining_frames}
+        self._spell_targeting = False
+        self._spell_targeting_spell = None
+        self._selected_spell_index = 0
+
+    @property
+    def available_spells(self):
+        """Return Spell objects from unit_stats.spell_list."""
+        return list(getattr(self.unit_stats, 'spell_list', ()))
+
     @property
     def available_abilities(self):
         """Return abilities unlocked at current level."""
@@ -168,6 +184,16 @@ class General:
 
         if self.attack_cooldown > 0:
             self.attack_cooldown -= 1
+
+        # Mana regeneration
+        if self.max_mana > 0 and self.mana < self.max_mana:
+            self.mana = min(self.max_mana, self.mana + self.mana_regen / FPS)
+
+        # Tick spell cooldowns
+        for sname in list(self.spell_cooldowns):
+            self.spell_cooldowns[sname] = max(0, self.spell_cooldowns[sname] - 1)
+            if self.spell_cooldowns[sname] <= 0:
+                del self.spell_cooldowns[sname]
 
         # Tick all abilities
         for a in self.abilities:
@@ -428,6 +454,73 @@ class General:
             self.alive = False
         return damage
 
+    # ── Spellcasting ────────────────────────────────────────────────
+
+    def can_cast(self, spell):
+        """Check if the general can cast this spell right now."""
+        if self.max_mana <= 0 or not self.alive:
+            return False
+        if self.mana < spell.mana_cost:
+            return False
+        if self.spell_cooldowns.get(spell.name, 0) > 0:
+            return False
+        return True
+
+    def cast_spell(self, spell, target_squad=None, target_pos=None,
+                   friendly_squads=None, enemy_squads=None):
+        """Attempt to cast a spell. Returns True if successful."""
+        if not self.can_cast(spell):
+            return False
+        self.mana -= spell.mana_cost
+        self.spell_cooldowns[spell.name] = int(spell.cooldown_seconds * FPS)
+
+        if spell.effect_type == "damage":
+            targets = []
+            if spell.targeting == "area" and target_pos and enemy_squads:
+                radius = spell.aoe_radius or SPELL_AOE_DEFAULT_RADIUS
+                for sq in enemy_squads:
+                    if sq.is_destroyed:
+                        continue
+                    d = distance(self.x, self.y if not target_pos else target_pos[1],
+                                 sq.x, sq.y)
+                    if target_pos:
+                        d = distance(target_pos[0], target_pos[1], sq.x, sq.y)
+                    if d < radius:
+                        targets.append(sq)
+            elif target_squad and not target_squad.is_destroyed:
+                targets.append(target_squad)
+            for sq in targets:
+                for s in sq.alive_soldiers[:min(8, len(sq.alive_soldiers))]:
+                    s.take_damage(spell.damage, armor_penetration=80,
+                                  damage_type=spell.damage_type)
+                    if not s.alive:
+                        sq._dying_soldiers.append(s)
+                        sq.on_casualty()
+                        self.kills += 1
+        elif spell.effect_type == "buff" and friendly_squads:
+            # Buff nearest friendly squad
+            best = None
+            best_d = 999999
+            for sq in friendly_squads:
+                if sq.is_destroyed:
+                    continue
+                d = distance(self.x, self.y, sq.x, sq.y)
+                if d < best_d:
+                    best_d = d
+                    best = sq
+            if best:
+                duration = int(spell.duration_seconds * FPS) if spell.duration_seconds else 300
+                best.active_buffs[spell.name] = duration
+                if spell.heal > 0:
+                    for s in best.alive_soldiers:
+                        s.health = min(s.max_health, s.health + spell.heal)
+        elif spell.effect_type == "debuff" and target_squad:
+            duration = int(spell.duration_seconds * FPS) if spell.duration_seconds else 300
+            target_squad.active_buffs[spell.name] = duration
+            if "Dread" in spell.name or "Curse" in spell.name:
+                target_squad.apply_morale_modifier(-15)
+        return True
+
     def on_death(self, friendly_squads):
         """Apply morale penalty when a general dies."""
         for sq in friendly_squads:
@@ -514,6 +607,15 @@ class General:
         xp_w = int(bar_w * min(1.0, progress))
         pygame.draw.rect(surface, (100, 180, 255), (bar_x, xp_y, xp_w, xp_h))
 
+        # Mana bar (below XP, if caster)
+        if self.max_mana > 0:
+            mana_y = xp_y + xp_h + 1
+            mana_h = max(1, camera.scale(2))
+            pygame.draw.rect(surface, (30, 30, 60), (bar_x, mana_y, bar_w, mana_h))
+            mana_w = int(bar_w * self.mana / self.max_mana)
+            mc = MANA_BAR_COLOR if self.mana / self.max_mana > 0.3 else MANA_BAR_LOW_COLOR
+            pygame.draw.rect(surface, mc, (bar_x, mana_y, mana_w, mana_h))
+
         # Name label
         if camera.zoom > 0.4:
             font = get_font(max(14, camera.scale(16)))
@@ -525,6 +627,50 @@ class General:
         # Selection circle
         if self.selected:
             pygame.draw.circle(surface, GOLD, (sx, sy), r + 4, 2)
+
+        # Spell icons (when selected and has spells)
+        spells = self.available_spells
+        if self.selected and spells and camera.zoom > 0.35:
+            icon_s = SPELL_ICON_SIZE
+            total_w = len(spells) * (icon_s + 2)
+            ix = int(sx - total_w // 2)
+            iy = int(sy + camera.scale(20))
+            for i, spell in enumerate(spells):
+                school_colors = {
+                    "fire": (180, 60, 20), "ice": (60, 120, 200),
+                    "heavens": (100, 100, 200), "shadow": (80, 0, 120),
+                    "death": (30, 120, 30), "life": (60, 180, 60),
+                    "beasts": (140, 110, 40), "metal": (160, 160, 120),
+                }
+                bg = school_colors.get(spell.school, (80, 80, 120))
+                rect = pygame.Rect(ix + i * (icon_s + 2), iy, icon_s, icon_s)
+                pygame.draw.rect(surface, bg, rect)
+                border_c = GOLD if i == self._selected_spell_index else (120, 120, 140)
+                pygame.draw.rect(surface, border_c, rect, 2)
+                cd = self.spell_cooldowns.get(spell.name, 0)
+                if cd > 0:
+                    cd_h = int(icon_s * cd / (spell.cooldown_seconds * FPS))
+                    cd_surf = pygame.Surface((icon_s, cd_h), pygame.SRCALPHA)
+                    cd_surf.fill((0, 0, 0, 140))
+                    surface.blit(cd_surf, (rect.x, rect.bottom - cd_h))
+                sfont = get_font(max(9, int(icon_s * 0.45)))
+                cost_t = sfont.render(str(spell.mana_cost), True,
+                                      (200, 200, 255) if self.mana >= spell.mana_cost
+                                      else (255, 80, 80))
+                surface.blit(cost_t, (rect.right - cost_t.get_width() - 1,
+                                      rect.bottom - cost_t.get_height()))
+                letter = sfont.render(spell.name[0], True, (255, 255, 255))
+                surface.blit(letter, (rect.x + 2, rect.y + 1))
+
+        # Spell targeting range indicator
+        if self._spell_targeting and self._spell_targeting_spell:
+            sp = self._spell_targeting_spell
+            r_range = int(camera.scale(sp.range_distance))
+            if r_range > 0:
+                range_surf = pygame.Surface((r_range * 2, r_range * 2), pygame.SRCALPHA)
+                pygame.draw.circle(range_surf, SPELL_RANGE_INDICATOR_COLOR,
+                                   (r_range, r_range), r_range)
+                surface.blit(range_surf, (int(sx - r_range), int(sy - r_range)))
 
         # Draw duel clash effects
         new_clashes = []

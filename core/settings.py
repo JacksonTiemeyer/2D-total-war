@@ -204,6 +204,16 @@ COHESION_LIMIT = 20                  # max stray distance before auto-reform
 # Massive unit visual scale
 MASSIVE_VISUAL_SCALE = 1.8           # soldier radius multiplier for massive units
 
+# Mana / Magic System
+MANA_REGEN_PER_SECOND = 1.0         # base mana regen per second (overridden per-unit)
+MANA_BAR_COLOR = (100, 150, 255)    # blue mana bar
+MANA_BAR_LOW_COLOR = (150, 100, 255)  # purple when low
+SPELL_ICON_SIZE = 24                # pixel size of spell icons in HUD
+SPELL_RANGE_INDICATOR_COLOR = (0, 150, 255, 80)  # semi-transparent blue
+SPELL_CAST_COOLDOWN_FRAMES = 30     # minimum frames between casts
+SPELL_PROJECTILE_SPEED = 6.0        # world units per frame
+SPELL_AOE_DEFAULT_RADIUS = 60       # default area-of-effect radius
+
 # Weather Effects
 WEATHER_TYPES = ["clear", "rain", "fog", "mud", "wind"]
 WEATHER_RAIN_ACCURACY = 0.8      # -20% ranged accuracy

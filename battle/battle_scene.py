@@ -691,6 +691,13 @@ class BattleScene:
             # Ability hotkeys: Q, W, E, R
             elif event.key in (pygame.K_q, pygame.K_w, pygame.K_e, pygame.K_r):
                 self._handle_ability_key(event.key)
+            # Spell targeting: G to toggle, Tab to cycle spell slot, Escape to cancel
+            elif event.key == pygame.K_g:
+                self._toggle_spell_targeting()
+            elif event.key == pygame.K_TAB:
+                self._cycle_spell_slot()
+            elif event.key == pygame.K_ESCAPE:
+                self._cancel_spell_targeting()
 
         if event.type == pygame.MOUSEBUTTONDOWN:
             if event.button == 1:
@@ -756,6 +763,97 @@ class BattleScene:
         enemy = self.enemy_squads if g.team == 0 else self.player_squads
         if g.activate_ability(index, friendly, enemy):
             get_audio().play("ability")
+
+    # ── Spell Targeting ─────────────────────────────────────────────
+
+    def _get_spell_caster(self):
+        """Return the currently selected spell-capable entity, or None."""
+        if self.selected_general and self.selected_general.available_spells:
+            return self.selected_general
+        if len(self.selected_squads) == 1 and self.selected_squads[0].available_spells:
+            return self.selected_squads[0]
+        return None
+
+    def _toggle_spell_targeting(self):
+        """Toggle spell targeting mode for the selected caster."""
+        caster = self._get_spell_caster()
+        if not caster:
+            return
+        if caster._spell_targeting:
+            caster._spell_targeting = False
+            caster._spell_targeting_spell = None
+        else:
+            spells = caster.available_spells
+            if spells:
+                idx = caster._selected_spell_index
+                if idx >= len(spells):
+                    idx = 0
+                spell = spells[idx]
+                caster._spell_targeting = True
+                caster._spell_targeting_spell = spell
+                get_audio().play("click")
+
+    def _cycle_spell_slot(self):
+        """Cycle through spell slots on the selected caster."""
+        caster = self._get_spell_caster()
+        if not caster:
+            return
+        spells = caster.available_spells
+        if not spells:
+            return
+        caster._selected_spell_index = (caster._selected_spell_index + 1) % len(spells)
+        if caster._spell_targeting:
+            caster._spell_targeting_spell = spells[caster._selected_spell_index]
+
+    def _cancel_spell_targeting(self):
+        """Cancel spell targeting mode."""
+        caster = self._get_spell_caster()
+        if caster and caster._spell_targeting:
+            caster._spell_targeting = False
+            caster._spell_targeting_spell = None
+
+    def _try_spell_cast(self, wx, wy):
+        """Attempt to cast spell at world position. Returns True if cast happened."""
+        caster = self._get_spell_caster()
+        if not caster or not caster._spell_targeting or not caster._spell_targeting_spell:
+            return False
+
+        spell = caster._spell_targeting_spell
+
+        # Check range
+        d = distance(caster.x, caster.y, wx, wy)
+        if d > spell.range_distance:
+            return False  # out of range, don't consume the click
+
+        # Find target squad at position (for unit-targeted spells)
+        target_squad = None
+        if spell.targeting == "unit" or spell.effect_type == "damage":
+            for sq in self.enemy_squads:
+                if sq.is_destroyed:
+                    continue
+                bbox = sq.get_bounding_box()
+                if point_in_rect(wx, wy, *bbox):
+                    target_squad = sq
+                    break
+
+        # Cast based on entity type
+        from battle.squad import Squad
+        if isinstance(caster, Squad):
+            success = caster.cast_spell(spell, target_squad=target_squad,
+                                        target_pos=(wx, wy),
+                                        all_squads=self.all_squads)
+        else:
+            # General
+            success = caster.cast_spell(spell, target_squad=target_squad,
+                                        target_pos=(wx, wy),
+                                        friendly_squads=self.player_squads,
+                                        enemy_squads=self.enemy_squads)
+        if success:
+            get_audio().play("ability")
+            # Exit targeting mode after cast
+            caster._spell_targeting = False
+            caster._spell_targeting_spell = None
+        return success
 
     def _handle_left_click(self, pos):
         # Check UI buttons first
@@ -947,6 +1045,10 @@ class BattleScene:
 
     def _handle_right_click(self, pos):
         wx, wy = self.camera.screen_to_world(*pos)
+
+        # Spell casting mode: right-click casts the selected spell
+        if self._try_spell_cast(wx, wy):
+            return
 
         target_squad = None
         for sq in self.enemy_squads:
@@ -1643,8 +1745,20 @@ class BattleScene:
                 extra += f"  RS:{sq.unit_stats.ranged_strength} RAP:{sq.unit_stats.ranged_armor_penetration}%"
             if sq.is_braced:
                 extra += "  BRACED"
+            if sq.max_mana > 0:
+                extra += f"  Mana:{int(sq.mana)}/{sq.max_mana}"
             text2 = small_font.render(extra, True, (160, 160, 160))
             surface.blit(text2, (10, y))
+            # Spell info line
+            if sq.max_mana > 0 and sq.available_spells:
+                y += 16
+                sp = sq.available_spells[sq._selected_spell_index] if sq._selected_spell_index < len(sq.available_spells) else sq.available_spells[0]
+                cd = sq.spell_cooldowns.get(sp.name, 0)
+                cd_s = f" CD:{cd // 60}s" if cd > 0 else " READY"
+                spell_info = f"[G] Cast: {sp.name} ({sp.mana_cost}mp){cd_s}  [Tab] cycle"
+                spell_color = (100, 180, 255) if sq._spell_targeting else (140, 140, 180)
+                text3 = small_font.render(spell_info, True, spell_color)
+                surface.blit(text3, (10, y))
         else:
             # Multiple units — summary
             count = len(self.selected_squads)
@@ -1732,6 +1846,20 @@ class BattleScene:
                 f"DUELING {g.duel_opponent.name}! Score: {g.duel_score}-{g.duel_opponent.duel_score}",
                 True, GOLD)
             surface.blit(duel_text, (10, y))
+
+        # Spell info for caster generals
+        if g.max_mana > 0 and g.available_spells:
+            mana_text = small_font.render(
+                f"Mana: {int(g.mana)}/{g.max_mana}", True, (100, 180, 255))
+            surface.blit(mana_text, (10, y))
+            y += 16
+            sp = g.available_spells[g._selected_spell_index] if g._selected_spell_index < len(g.available_spells) else g.available_spells[0]
+            cd = g.spell_cooldowns.get(sp.name, 0)
+            cd_s = f" CD:{cd // 60}s" if cd > 0 else " READY"
+            spell_info = f"[G] Cast: {sp.name} ({sp.mana_cost}mp){cd_s}  [Tab] cycle"
+            spell_color = (100, 180, 255) if g._spell_targeting else (140, 140, 180)
+            text3 = small_font.render(spell_info, True, spell_color)
+            surface.blit(text3, (10, y))
 
         # Ability buttons (right side)
         btn_x = 400
