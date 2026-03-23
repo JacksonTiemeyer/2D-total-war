@@ -487,6 +487,8 @@ class Squad:
 
         if self.state == SquadState.BROKEN:
             self._do_movement(speed_mult=0.8)
+            cx, cy = self.center
+            self.x, self.y = cx, cy
             if self.morale > MORALE_BREAK_THRESHOLD + 10:
                 self.state = SquadState.IDLE
             return
@@ -844,11 +846,12 @@ class Squad:
             self.target_squad = None
 
     def _do_rout(self):
+        from core.settings import BATTLE_MAP_WIDTH, BATTLE_MAP_HEIGHT
         angle = self.facing_angle + math.pi
         speed = self.effective_speed * 1.5
         for s in self.alive_soldiers:
-            s.x += math.cos(angle) * speed + random.uniform(-0.5, 0.5)
-            s.y += math.sin(angle) * speed + random.uniform(-0.5, 0.5)
+            s.x = max(0, min(BATTLE_MAP_WIDTH, s.x + math.cos(angle) * speed + random.uniform(-0.5, 0.5)))
+            s.y = max(0, min(BATTLE_MAP_HEIGHT, s.y + math.sin(angle) * speed + random.uniform(-0.5, 0.5)))
 
     def on_casualty(self):
         self._alive_cache = None  # invalidate cache on soldier death
