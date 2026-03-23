@@ -2,13 +2,11 @@
 
 - **Applied**: Yes
 - **Date**: 2026-03-23
+- **Migration Complete**: XP formula and distribution logic now in VeterancyEngine
 - **Files Modified**:
-  - `battle/engine.py` — added `veterancy_engine=None` param and `award_battle_xp()` convenience method
-  - `docs/CLAUDE_PATCHE.md` — added CombatEngine integration notes
-- **Files Created** (original):
-  - `battle/veterancy_engine.py`
-  - `docs/CLAUDE_PATCHE.md`
-  - `docs/claude_patchE_status.md`
-- **Tests Passing**: Yes (Patch B smoke tests + import checks)
-- **Breaking Changes**: None — `veterancy_engine` defaults to None; existing callers unaffected
-- **Integration**: VeterancyEngine composable into CombatEngine; `award_battle_xp()` available for post-battle resolution
+  - `battle/veterancy_engine.py` — calculate_xp(), award_xp(), distribute_battle_xp()
+  - `main.py` — _award_post_battle_xp() delegates to VeterancyEngine
+  - `battle/engine.py` — award_battle_xp() convenience method
+- **Tests Passing**: Yes (test_veterancy_calculate_xp_win, test_veterancy_calculate_xp_loss, test_veterancy_award_xp_with_levelup, test_veterancy_calculate_xp_empty)
+- **Breaking Changes**: None — VeterancyEngine is instantiated on-demand in main.py
+- **Integration**: Full XP distribution (general, player character, companions) centralized

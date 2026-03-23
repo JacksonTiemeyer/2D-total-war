@@ -2,15 +2,11 @@
 
 - **Applied**: Yes
 - **Date**: 2026-03-23
+- **Migration Complete**: All _enemy_ai() logic now lives in AIEngine
 - **Files Modified**:
-  - `battle/ai_engine.py` — corrected `update()` to battle-level signature (all_squads, player_generals, enemy_generals, terrain, weather)
-  - `battle/engine.py` — added `ai_engine=None` param; `step()` dispatches to `ai_engine.update()` if present
-  - `battle/battle_scene.py` — imports AIEngine; creates `_ai_engine` and passes to CombatEngine
-  - `docs/CLAUDE_PATCHC.md` — updated API surface, interaction surface, testing notes
-- **Files Created** (original):
-  - `battle/ai_engine.py`
-  - `docs/CLAUDE_PATCHC.md`
-  - `docs/claude_patchC_status.md`
-- **Tests Passing**: Yes (smoke test `test_ai_engine_called` + import check)
-- **Breaking Changes**: None — ai_engine defaults to None; existing callers unaffected
-- **Integration**: AIEngine composable into CombatEngine; dispatched per-tick from `step()`
+  - `battle/ai_engine.py` — full role-based AI: melee advance, cavalry flank, ranged stay-back, general abilities, targeting helpers
+  - `battle/engine.py` — ai_engine dispatched from step()
+  - `battle/battle_scene.py` — _enemy_ai() delegates to AIEngine; helper methods removed (~240 lines)
+- **Tests Passing**: Yes (test_ai_engine_called, test_ai_role_classification, test_ai_no_crash_empty)
+- **Breaking Changes**: None — AIEngine is wired into CombatEngine; fallback preserves behavior
+- **Integration**: AIEngine runs as part of CombatEngine.step() after squad/general updates
