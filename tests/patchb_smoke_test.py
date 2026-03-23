@@ -21,9 +21,13 @@ class MockSquad:
     def __init__(self, destroyed=False):
         self.is_destroyed = destroyed
         self.update_count = 0
+        self.terrain_mods = None
+        self._mods_at_update = None
 
     def update(self, all_squads):
         self.update_count += 1
+        # Capture terrain_mods state at update time
+        self._mods_at_update = self.terrain_mods
 
 
 class MockGeneral:
@@ -147,6 +151,26 @@ def test_full_composition():
     assert mg.xp == 5, f"Expected 5, got {mg.xp}"
 
 
+def test_terrain_mods_before_update():
+    """Verify terrain_mods are available when update() is called."""
+    sq = MockSquad()
+    sq.terrain_mods = {"speed": 0.8, "exhaustion_mult": 1.0}
+    engine = CombatEngine([sq], [], [], [])
+    engine.step()
+    assert sq._mods_at_update is not None, "terrain_mods should be set before update()"
+    assert sq._mods_at_update["speed"] == 0.8
+
+
+def test_single_update_per_tick():
+    """Verify squads/generals are updated exactly once per step (no duplication)."""
+    sq = MockSquad()
+    gen = MockGeneral()
+    engine = CombatEngine([sq], [], [gen], [])
+    engine.step()
+    assert sq.update_count == 1, f"Squad should update once, got {sq.update_count}"
+    assert gen.update_count == 1, f"General should update once, got {gen.update_count}"
+
+
 ALL_TESTS = [
     test_step_updates_squads,
     test_step_skips_destroyed,
@@ -156,6 +180,8 @@ ALL_TESTS = [
     test_ai_engine_called,
     test_siege_engine_tick_compat,
     test_full_composition,
+    test_terrain_mods_before_update,
+    test_single_update_per_tick,
 ]
 
 

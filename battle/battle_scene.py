@@ -1013,12 +1013,23 @@ class BattleScene:
         prev_routed = {id(sq) for sq in self.all_squads
                        if sq.state == SquadState.ROUTED}
 
+        # Apply terrain modifiers to all squads before updates
         for sq in self.all_squads:
             mods = self.get_terrain_modifiers(sq)
             # D2: Season exhaustion multiplier
             mods["exhaustion_mult"] = self.season_exhaustion_mult
             sq.terrain_mods = mods
-            sq.update(self.all_squads)
+
+        # Delegate squad and general updates to CombatEngine (with fallback)
+        if self._combat_engine is not None:
+            self._combat_engine.step()
+        else:
+            for sq in self.all_squads:
+                sq.update(self.all_squads)
+            for g in self.player_generals:
+                g.update(self.player_squads, self.enemy_squads)
+            for g in self.enemy_generals:
+                g.update(self.enemy_squads, self.player_squads)
 
         # D1: Push soldiers out of water (coastal maps)
         if self.terrain_type == "coastal":
@@ -1035,19 +1046,7 @@ class BattleScene:
         # Resolve soldier-soldier collisions
         self._resolve_collisions()
 
-        for g in self.player_generals:
-            g.update(self.player_squads, self.enemy_squads)
-        for g in self.enemy_generals:
-            g.update(self.enemy_squads, self.player_squads)
-
         self._enemy_ai()
-
-        # Patch B: guarded combat engine step
-        try:
-            if self._combat_engine is not None:
-                self._combat_engine.step()
-        except Exception:
-            pass
 
         # Sound triggers: charge impact and rout
         audio = get_audio()
