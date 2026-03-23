@@ -26,6 +26,8 @@ SiegeEngine.step(self) -> None
 - Constructor accepts optional lists for incremental wiring
 
 ## Interaction Surface
+- **Wired into**: `CombatEngine.__init__(siege_engine=None)` — optional composition
+- **Called from**: `CombatEngine.step()` delegates to `siege_engine.step()` if present
 - **Will replace**: Siege logic in `battle/siege_scene.py` _tick() override
 - **References**: Gate, WallSegment, Tower classes from siege_scene.py
 
