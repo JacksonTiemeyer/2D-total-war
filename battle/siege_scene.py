@@ -15,6 +15,7 @@ from core.settings import (
 from core.utils import distance, get_font
 from battle.battle_scene import BattleScene, BattleResult
 from battle.squad import SquadState
+from battle.siege_engine import SiegeEngine
 
 
 # ── Siege structures ────────────────────────────────────────────────────
@@ -171,6 +172,19 @@ class SiegeScene(BattleScene):
             self.deploy_zone = (wall_x + 80, 50, BATTLE_MAP_WIDTH - wall_x - 130,
                                 BATTLE_MAP_HEIGHT - 100)
 
+        # Wire SiegeEngine into CombatEngine
+        self._siege_engine = SiegeEngine(
+            walls=self.walls,
+            gates=self.gate,
+            towers=self.towers,
+            player_squads=self.player_squads,
+            enemy_squads=self.enemy_squads,
+            all_squads=self.all_squads,
+            player_is_attacker=self.player_is_attacker,
+        )
+        if self._combat_engine is not None:
+            self._combat_engine.siege_engine = self._siege_engine
+
     def _generate_terrain(self):
         """Override: generate siege-specific terrain with walls."""
         # Wall runs vertically through the middle of the map
@@ -273,57 +287,14 @@ class SiegeScene(BattleScene):
         self.all_generals = self.player_generals + self.enemy_generals
 
     def _tick(self):
-        """Override: add wall collision, gate damage, and tower firing."""
+        """Override: super()._tick() handles squads/generals via CombatEngine.step(),
+        which also calls siege_engine.step() for tower/gate/wall logic."""
         super()._tick()
-
-        # Towers fire at enemies
-        attacker_team = 0 if self.player_is_attacker else 1
-        for tower in self.towers:
-            targets = self.player_squads if tower.team != 0 else self.enemy_squads
-            tower.update(targets)
-
-        # Gate takes damage from nearby attacking melee units
-        if self.gate and not self.gate.destroyed:
-            for sq in (self.player_squads if self.player_is_attacker
-                       else self.enemy_squads):
-                if sq.is_destroyed or sq.state != SquadState.FIGHTING:
-                    continue
-                cx, cy = sq.center
-                gx, gy = self.gate.x, self.gate.y + self.gate.height // 2
-                if distance(cx, cy, gx, gy) < 80:
-                    # Attacking the gate
-                    dps = sq.alive_count * 0.3
-                    self.gate.take_damage(dps)
-
-        # Wall collision: push soldiers out of wall segments
-        for sq in self.all_squads:
-            if sq.is_destroyed:
-                continue
-            for s in sq.alive_soldiers:
-                for wall in self.walls:
-                    if wall.contains(s.x, s.y):
-                        # Push soldier to nearest side
-                        left_dist = abs(s.x - wall.x)
-                        right_dist = abs(s.x - (wall.x + wall.width))
-                        if left_dist < right_dist:
-                            s.x = wall.x - 2
-                        else:
-                            s.x = wall.x + wall.width + 2
-
-        # Gate collision (only if not destroyed)
-        if self.gate and not self.gate.destroyed:
-            for sq in self.all_squads:
-                if sq.is_destroyed:
-                    continue
-                for s in sq.alive_soldiers:
-                    gx, gy, gw, gh = self.gate.rect
-                    if gx <= s.x <= gx + gw and gy <= s.y <= gy + gh:
-                        left_dist = abs(s.x - gx)
-                        right_dist = abs(s.x - (gx + gw))
-                        if left_dist < right_dist:
-                            s.x = gx - 2
-                        else:
-                            s.x = gx + gw + 2
+        # SiegeEngine.step() is called from CombatEngine.step() — no need to duplicate.
+        # Fallback if engine not wired:
+        if self._combat_engine is None or self._combat_engine.siege_engine is None:
+            if hasattr(self, '_siege_engine') and self._siege_engine is not None:
+                self._siege_engine.step()
 
     def draw(self, surface):
         """Override: draw walls, gate, towers on top of base battle scene."""

@@ -23,6 +23,7 @@ class MockSquad:
         self.update_count = 0
         self.terrain_mods = None
         self._mods_at_update = None
+        self.alive_soldiers = []  # for siege collision compat
 
     def update(self, all_squads):
         self.update_count += 1
@@ -192,6 +193,7 @@ class MockAISquad:
         self.move_target = None
         self.update_count = 0
         self.terrain_mods = None
+        self.alive_soldiers = []
 
         # Minimal unit_stats mock
         class _Stats:
@@ -235,6 +237,96 @@ def test_ai_no_crash_empty():
     ai.update([], [], [])
 
 
+def test_siege_engine_tower_firing():
+    """Verify SiegeEngine calls tower.update() with correct targets."""
+    class MockTower:
+        def __init__(self, team):
+            self.team = team
+            self.updated_with = None
+        def update(self, targets):
+            self.updated_with = targets
+
+    tower = MockTower(team=1)
+    p_sq = MockSquad()
+    e_sq = MockSquad()
+    se = SiegeEngine(towers=[tower], player_squads=[p_sq], enemy_squads=[e_sq],
+                     all_squads=[p_sq, e_sq])
+    se.step()
+    # team=1 tower should fire at player squads (team != 0 check)
+    assert tower.updated_with is not None, "Tower should have been updated"
+    assert p_sq in tower.updated_with, "Tower team=1 should target player squads"
+
+
+def test_siege_engine_gate_damage():
+    """Verify SiegeEngine applies gate damage from nearby attacking squads."""
+    from battle.squad import SquadState as _SS
+
+    class MockGate:
+        def __init__(self):
+            self.x = 100
+            self.y = 100
+            self.width = 30
+            self.height = 80
+            self.hp = 500
+            self.destroyed = False
+            self.damage_taken = 0
+        @property
+        def rect(self):
+            return (self.x, self.y, self.width, self.height)
+        def take_damage(self, amount):
+            self.damage_taken += amount
+
+    gate = MockGate()
+    # Attacking squad near the gate
+    atk = MockAISquad(team=0, state=_SS.FIGHTING)
+    atk.x, atk.y = 105, 140  # close to gate center
+    atk.center = (105, 140)
+    atk.alive_count = 10
+
+    se = SiegeEngine(gates=gate, player_squads=[atk], enemy_squads=[],
+                     all_squads=[atk], player_is_attacker=True)
+    se.step()
+    assert gate.damage_taken > 0, f"Gate should have taken damage, got {gate.damage_taken}"
+
+
+def test_siege_engine_wall_collision():
+    """Verify SiegeEngine pushes soldiers out of walls."""
+    class MockWall:
+        def __init__(self, x, y, w, h):
+            self.x = x
+            self.y = y
+            self.width = w
+            self.height = h
+        def contains(self, sx, sy):
+            return (self.x <= sx <= self.x + self.width and
+                    self.y <= sy <= self.y + self.height)
+
+    class MockSoldier:
+        def __init__(self, x, y):
+            self.x = x
+            self.y = y
+            self.alive = True
+
+    class MockSquadWithSoldiers:
+        def __init__(self):
+            self.is_destroyed = False
+            self.soldiers = [MockSoldier(115, 50)]  # inside wall at x=100, w=30
+            self.alive_soldiers = self.soldiers
+            self.update_count = 0
+        def update(self, all_squads):
+            self.update_count += 1
+
+    wall = MockWall(100, 0, 30, 200)
+    sq = MockSquadWithSoldiers()
+
+    se = SiegeEngine(walls=[wall], all_squads=[sq])
+    se.step()
+    # Soldier at x=115 is 15 from left (100) and 15 from right (130)
+    # Should be pushed to one side
+    s = sq.soldiers[0]
+    assert s.x < 100 or s.x > 130, f"Soldier should be pushed out of wall, got x={s.x}"
+
+
 ALL_TESTS = [
     test_step_updates_squads,
     test_step_skips_destroyed,
@@ -248,6 +340,9 @@ ALL_TESTS = [
     test_single_update_per_tick,
     test_ai_role_classification,
     test_ai_no_crash_empty,
+    test_siege_engine_tower_firing,
+    test_siege_engine_gate_damage,
+    test_siege_engine_wall_collision,
 ]
 
 
