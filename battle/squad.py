@@ -166,6 +166,8 @@ class Squad:
         self._spell_targeting = False  # True when player is aiming a spell
         self._spell_targeting_spell = None  # which spell is being aimed
         self._selected_spell_index = 0  # currently selected spell slot
+        # Battleground reference (if this squad is engaged in a Battleground)
+        self.battleground = None
 
     def _create_formation(self, stats, count=None):
         if count is None:
@@ -411,6 +413,10 @@ class Squad:
         # Invalidate alive cache each frame
         self._alive_cache = None
         if self.is_destroyed:
+            return
+        # If part of a Battleground, delegate per-frame to the Battleground and skip standard movement
+        if getattr(self, 'battleground', None) is not None and self.battleground is not None:
+            self.battleground.update()
             return
 
         # Update individual soldiers and sync facing angle

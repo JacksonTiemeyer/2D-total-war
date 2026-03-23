@@ -219,6 +219,13 @@ class BattleScene:
                                 s1.engaged_with = s2
                             if s2.engaged_with is None:
                                 s2.engaged_with = s1
+                            # NEW: spawn Battleground for this opposing squad pair if neither is in one
+                            if getattr(sq1, 'battleground', None) is None and getattr(sq2, 'battleground', None) is None:
+                                try:
+                                    from battle.battleground import Battleground
+                                    Battleground(sq1, sq2)
+                                except Exception:
+                                    pass
 
                         if dist_sq >= push_radius * push_radius or dist_sq < 0.01:
                             continue
