@@ -28,8 +28,9 @@ Controls:
 import sys
 try:
     import pygame  # type: ignore
-except Exception:
+except ImportError:
     pygame = None
+from core.game_flow import build_companion_payloads, collect_battle_stats
 from core.settings import SCREEN_WIDTH, SCREEN_HEIGHT, FPS, TITLE, WHITE, BLACK, GOLD
 from core.utils import get_font
 from campaign.campaign_scene import CampaignScene
@@ -138,8 +139,8 @@ class Game:
             if event.key == pygame.K_RETURN or event.key == pygame.K_b:
                 # Start battle - check if siege
                 pc_class = self.player_character.player_class if self.player_character else None
-                player_data = self.campaign.player_army.get_battle_data(player_class=pc_class)
-                enemy_data = self.current_enemy.get_battle_data()
+                player_data = self.campaign.player_army.get_battle_payload(player_class=pc_class)
+                enemy_data = self.current_enemy.get_battle_payload()
                 self.is_siege = self._check_siege()
                 # D1: Get terrain type, D2: Get season for weather bias
                 terrain_type = getattr(self, 'battle_terrain_type', None)
@@ -148,10 +149,10 @@ class Game:
                 companions_data = self._get_companion_battle_data()
                 if self.is_siege:
                     from battle.siege_scene import SiegeScene
-                    self.battle = SiegeScene(player_data, enemy_data,
+                    self.battle = SiegeScene(player_data.to_legacy_dict(), enemy_data.to_legacy_dict(),
                                             player_is_attacker=True)
                 else:
-                    self.battle = BattleScene(player_data, enemy_data,
+                    self.battle = BattleScene(player_data.to_legacy_dict(), enemy_data.to_legacy_dict(),
                                               terrain_type=terrain_type,
                                               season=season,
                                               companions=companions_data)
@@ -212,9 +213,8 @@ class Game:
             self.campaign.update()
             battle = self.campaign.get_pending_battle()
             if battle:
-                self.current_enemy = battle[1]
-                # D1: Store terrain type from campaign position
-                self.battle_terrain_type = battle[2] if len(battle) > 2 else None
+                self.current_enemy = battle.enemy_army
+                self.battle_terrain_type = battle.terrain_type
                 self.state = GameState.PRE_BATTLE
         elif self.state == GameState.BATTLE:
             self.battle.update()
@@ -223,25 +223,10 @@ class Game:
 
     def _get_companion_battle_data(self):
         """Build companion deployment data for battle scene."""
-        if not self.campaign or not hasattr(self.campaign, 'companion_manager'):
-            return None
-        from data.unit_types import SWORDSMEN
-        companions = self.campaign.companion_manager.companions
+        companions = build_companion_payloads(self.campaign)
         if not companions:
             return None
-        data = []
-        for c in companions:
-            if not c.alive:
-                continue
-            # Use swordsmen stats as base for the companion hero
-            base_stats = SWORDSMEN
-            data.append({
-                "name": c.name,
-                "stats": base_stats,
-                "level": c.level,
-                "player_class": c.companion_class,
-            })
-        return data if data else None
+        return [companion.to_legacy_dict() for companion in companions]
 
     def _check_siege(self):
         """Check if the battle should be a siege (settlement siege or near castle)."""
@@ -261,73 +246,7 @@ class Game:
 
     def _collect_battle_stats(self):
         """Gather end-of-battle statistics for the summary screen."""
-        b = self.battle
-        stats = {
-            "result": b.result,
-            "duration_frames": b.battle_timer,
-            "player_squads": [],
-            "enemy_squads": [],
-            "player_generals": [],
-            "enemy_generals": [],
-            "total_player_kills": 0,
-            "total_enemy_kills": 0,
-            "loot_gold": 0,
-        }
-        for sq in b.player_squads:
-            entry = {
-                "name": sq.unit_stats.name,
-                "initial": sq.initial_count,
-                "alive": sq.alive_count,
-                "kills": sq.kills,
-                "exhaustion": sq.exhaustion_display,
-            }
-            stats["player_squads"].append(entry)
-            stats["total_player_kills"] += sq.kills
-        for sq in b.enemy_squads:
-            entry = {
-                "name": sq.unit_stats.name,
-                "initial": sq.initial_count,
-                "alive": sq.alive_count,
-                "kills": sq.kills,
-            }
-            stats["enemy_squads"].append(entry)
-            stats["total_enemy_kills"] += sq.kills
-        # General stats (include dead ones too via original lists)
-        for g in b.player_generals + [g for g in getattr(b, '_dead_generals', []) if g.team == 0]:
-            stats["player_generals"].append({
-                "name": g.name, "type": g.general_type,
-                "kills": g.kills, "duels_won": g.duels_won,
-                "level": g.level, "alive": g.alive,
-            })
-        for g in b.enemy_generals + [g for g in getattr(b, '_dead_generals', []) if g.team == 1]:
-            stats["enemy_generals"].append({
-                "name": g.name, "type": g.general_type,
-                "kills": g.kills, "duels_won": g.duels_won,
-                "level": g.level, "alive": g.alive,
-            })
-        # B10: Loot calculation - scales with enemy army strength
-        if b.result == BattleResult.PLAYER_WIN and self.current_enemy:
-            base_loot = 50
-            strength_loot = self.current_enemy.army_strength // 5
-            squad_loot = len(self.current_enemy.squads) * 15
-            stats["loot_gold"] = base_loot + strength_loot + squad_loot
-        # MVP squad
-        all_player = stats["player_squads"]
-        if all_player:
-            mvp = max(all_player, key=lambda s: s["kills"])
-            stats["mvp"] = mvp["name"] if mvp["kills"] > 0 else None
-        else:
-            stats["mvp"] = None
-
-        # Detect heroic victory (won against a numerically superior force)
-        if stats["result"] == BattleResult.PLAYER_WIN:
-            enemy_initial = sum(sq["initial"] for sq in stats["enemy_squads"])
-            player_initial = sum(sq["initial"] for sq in stats["player_squads"])
-            stats["heroic_victory"] = enemy_initial > player_initial
-        else:
-            stats["heroic_victory"] = False
-
-        self.battle_stats = stats
+        self.battle_stats = collect_battle_stats(self.battle, self.current_enemy).to_dict()
 
     def _resolve_battle(self):
         """Apply battle results to campaign and return."""

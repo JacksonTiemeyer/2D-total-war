@@ -3,6 +3,10 @@
 import math
 import random
 import pygame
+from battle import environment as battle_environment
+from battle import input_handlers as battle_input
+from battle import runtime as battle_runtime
+from battle import ui as battle_ui
 from core.settings import (
     SCREEN_WIDTH, SCREEN_HEIGHT, BATTLE_MAP_WIDTH, BATTLE_MAP_HEIGHT,
     TEAM_COLORS, TEAM_COLORS_LIGHT, GREEN, DARK_GREEN, SAND, BROWN,
@@ -29,8 +33,6 @@ from core.utils import distance, point_in_rect, angle_between, get_font
 from battle.squad import Squad, SquadState, Formation
 from battle.general import General, DuelState
 from core.audio import get_audio
-from battle.engine import CombatEngine
-from battle.ai_engine import AIEngine
 
 
 class BattleResult:
@@ -86,20 +88,12 @@ class BattleScene:
         self._ui_buttons = {}
         self._unit_card_rects = []
 
-        # Weather - D2: Season affects weather selection
-        self.weather = self._choose_weather()
+        # Weather and terrain are initialized after deployments are ready.
+        self.weather = None
         self.wind_direction = random.uniform(-1, 1)  # -1 = left, +1 = right
         self.weather_particles = []
-        self._init_weather_particles()
-
-        # D2: Season exhaustion modifier
         self.season_exhaustion_mult = 1.0
-        if self.season == SEASON_SUMMER:
-            self.season_exhaustion_mult = SEASON_SUMMER_EXHAUSTION_MULT
-
-        # Terrain features
         self.terrain = []
-        self._generate_terrain()
 
         # Deploy armies
         self._deploy_armies(player_army, enemy_army)
@@ -119,260 +113,43 @@ class BattleScene:
             g._all_enemy_generals = self.player_generals
 
         # Patch A: initialize combat engine scaffold after armies and generals are deployed
-        try:
-            self._ai_engine = AIEngine(army=self.enemy_squads, personality=None)
-            self._combat_engine = CombatEngine(
-                player_squads=self.player_squads,
-                enemy_squads=self.enemy_squads,
-                player_generals=self.player_generals,
-                enemy_generals=self.enemy_generals,
-                terrain=self.terrain,
-                weather=self.weather,
-                ai_engine=self._ai_engine,
-            )
-        except Exception:
-            self._combat_engine = None
+        battle_runtime.initialize_runtime(self)
 
     def _choose_weather(self):
         """D2: Choose weather based on season and terrain."""
-        if self.season == SEASON_AUTUMN and random.random() < SEASON_AUTUMN_MUD_CHANCE:
-            return "mud"
-        if self.season == SEASON_WINTER and random.random() < SEASON_WINTER_HARSH_WEATHER_CHANCE:
-            return random.choice(["fog", "rain"])
-        # Desert terrain tends to be clear
-        if self.terrain_type == "desert":
-            return random.choice(["clear", "clear", "clear", "wind"])
-        # Coastal terrain tends to be windy/rainy
-        if self.terrain_type == "coastal":
-            return random.choice(["clear", "wind", "rain"])
-        return random.choice(WEATHER_TYPES)
+        return battle_environment.choose_weather(self)
 
     def _generate_terrain(self):
         """D1: Generate terrain based on terrain_type from campaign map."""
-        tt = self.terrain_type
-        W, H = BATTLE_MAP_WIDTH, BATTLE_MAP_HEIGHT
-
-        if tt == "forest":
-            # 5-7 forest patches, 1 hill
-            num_forests = random.randint(5, 7)
-            for _ in range(num_forests):
-                x = random.randint(200, W - 500)
-                y = random.randint(200, H - 400)
-                w = random.randint(200, 400)
-                h = random.randint(200, 400)
-                self.terrain.append({"type": "forest", "rect": (x, y, w, h), "color": (30, 90, 20)})
-            # One hill
-            hx = random.randint(400, W - 600)
-            hy = random.randint(400, H - 400)
-            self.terrain.append({"type": "hill", "rect": (hx, hy, 350, 200), "color": (80, 140, 60)})
-
-        elif tt == "mountain":
-            # 3-4 large hills (elevated terrain), narrow valleys
-            num_hills = random.randint(3, 4)
-            for i in range(num_hills):
-                x = random.randint(100, W - 600)
-                y = random.randint(100, H - 400)
-                w = random.randint(400, 600)
-                h = random.randint(250, 400)
-                self.terrain.append({"type": "hill", "rect": (x, y, w, h), "color": (120, 110, 80)})
-            # Add a forest patch in a valley
-            self.terrain.append({"type": "forest", "rect": (W // 2 - 150, H // 2 - 100, 300, 200), "color": (40, 80, 30)})
-
-        elif tt == "desert":
-            # Sand dunes (hills with desert color), open ground
-            num_dunes = random.randint(2, 4)
-            for _ in range(num_dunes):
-                x = random.randint(200, W - 500)
-                y = random.randint(200, H - 400)
-                w = random.randint(250, 450)
-                h = random.randint(150, 300)
-                self.terrain.append({"type": "hill", "rect": (x, y, w, h), "color": (190, 170, 120)})
-
-        elif tt == "coastal":
-            # Water on one side (impassable), narrow land strip
-            # Water takes up right third of map
-            water_x = W * 2 // 3
-            self.terrain.append({
-                "type": "water", "rect": (water_x, 0, W - water_x, H),
-                "color": (40, 80, 150)
-            })
-            # A hill on the land side
-            self.terrain.append({"type": "hill", "rect": (300, 600, 350, 200), "color": (80, 140, 60)})
-            # A forest patch
-            self.terrain.append({"type": "forest", "rect": (100, 1200, 250, 250), "color": (30, 90, 20)})
-
-        else:
-            # Plains (default) - few hills and forests
-            self.terrain.append({"type": "hill", "rect": (800, 600, 400, 200), "color": (80, 140, 60)})
-            self.terrain.append({"type": "forest", "rect": (1800, 400, 300, 350), "color": (30, 90, 20)})
-            self.terrain.append({"type": "hill", "rect": (1200, 1200, 350, 180), "color": (80, 140, 60)})
-            self.terrain.append({"type": "forest", "rect": (500, 1100, 250, 300), "color": (30, 90, 20)})
+        battle_environment.generate_terrain(self)
 
     def get_terrain_at(self, x, y):
         """Return terrain type at given world position, or None."""
-        for t in self.terrain:
-            rx, ry, rw, rh = t["rect"]
-            if rx <= x <= rx + rw and ry <= y <= ry + rh:
-                return t["type"]
-        return None
+        return battle_environment.get_terrain_at(self, x, y)
 
     def is_water_at(self, x, y):
         """D1: Check if position is in water (impassable for coastal maps)."""
-        return self.get_terrain_at(x, y) == "water"
+        return battle_environment.is_water_at(self, x, y)
 
     def get_terrain_modifiers(self, squad):
         """Compute terrain modifiers for a squad based on its position."""
-        cx, cy = squad.center
-        terrain_type = self.get_terrain_at(cx, cy)
-        mods = {
-            "speed_mult": 1.0,
-            "ranged_accuracy_mult": 1.0,
-            "ranged_damage_mult": 1.0,
-            "melee_defense_mult": 1.0,
-            "charge_mult": 1.0,
-            "terrain_type": terrain_type,
-        }
-        if terrain_type == "hill":
-            mods["ranged_damage_mult"] = HILL_RANGED_BONUS
-            mods["melee_defense_mult"] = 1.1  # defensive advantage on high ground
-            # Charge/speed modifiers are directional — applied in combat resolution
-            # based on attacker vs defender terrain, not statically here
-        elif terrain_type == "forest":
-            if squad.is_cavalry:
-                mods["speed_mult"] = FOREST_CAVALRY_SPEED_MULT
-            mods["ranged_accuracy_mult"] = FOREST_RANGED_ACCURACY_MULT
-            mods["melee_defense_mult"] = FOREST_MELEE_DEFENSE_BONUS
-        elif terrain_type == "water":
-            # Water is impassable - extreme speed penalty to push units back
-            mods["speed_mult"] = 0.1
-
-        # D2: Season modifiers
-        if self.season == SEASON_WINTER:
-            mods["ranged_accuracy_mult"] *= SEASON_WINTER_RANGED_PENALTY
-
-        # Apply weather modifiers
-        wmods = self.get_weather_modifiers()
-        mods["ranged_accuracy_mult"] *= wmods["ranged_accuracy"]
-        mods["speed_mult"] *= wmods["speed"]
-        mods["charge_mult"] *= wmods["charge"]
-        return mods
+        return battle_environment.get_terrain_modifiers(self, squad)
 
     def _init_weather_particles(self):
         """Create initial particle pool for weather visuals."""
-        if self.weather == "rain":
-            for _ in range(150):
-                self.weather_particles.append([
-                    random.randint(0, SCREEN_WIDTH),
-                    random.randint(0, SCREEN_HEIGHT),
-                    random.uniform(3, 7),  # speed
-                ])
-        elif self.weather == "fog":
-            for _ in range(30):
-                self.weather_particles.append([
-                    random.randint(0, SCREEN_WIDTH),
-                    random.randint(0, SCREEN_HEIGHT),
-                    random.randint(60, 150),  # radius
-                ])
-        elif self.weather == "wind":
-            for _ in range(80):
-                self.weather_particles.append([
-                    random.randint(0, SCREEN_WIDTH),
-                    random.randint(0, SCREEN_HEIGHT),
-                    random.uniform(2, 5),  # speed
-                ])
+        battle_environment.init_weather_particles(self)
 
     def get_weather_modifiers(self):
         """Return global combat modifiers based on weather."""
-        mods = {
-            "ranged_accuracy": 1.0,
-            "exhaustion_rate": 1.0,
-            "speed": 1.0,
-            "charge": 1.0,
-            "vision": 1.0,
-        }
-        if self.weather == "rain":
-            mods["ranged_accuracy"] = WEATHER_RAIN_ACCURACY
-            mods["exhaustion_rate"] = WEATHER_RAIN_EXHAUSTION
-        elif self.weather == "fog":
-            mods["vision"] = WEATHER_FOG_VISION
-        elif self.weather == "mud":
-            mods["speed"] = WEATHER_MUD_SPEED
-            mods["charge"] = WEATHER_MUD_CHARGE
-        elif self.weather == "wind":
-            mods["ranged_accuracy"] = 1.0 + self.wind_direction * WEATHER_WIND_ACCURACY
-        return mods
+        return battle_environment.get_weather_modifiers(self)
 
     def _is_los_blocked(self, x1, y1, x2, y2):
         """Check if line of sight is blocked by a forest."""
-        for t in self.terrain:
-            if t["type"] != "forest":
-                continue
-            rx, ry, rw, rh = t["rect"]
-            # Simple: check if the midpoint of the LOS line falls inside a forest
-            # and neither endpoint is in that same forest
-            mx, my = (x1 + x2) / 2, (y1 + y2) / 2
-            if rx <= mx <= rx + rw and ry <= my <= ry + rh:
-                # Midpoint is in forest — blocked unless both endpoints are too
-                p1_in = rx <= x1 <= rx + rw and ry <= y1 <= ry + rh
-                p2_in = rx <= x2 <= rx + rw and ry <= y2 <= ry + rh
-                if not (p1_in and p2_in):
-                    return True
-        return False
+        return battle_environment.is_los_blocked(self, x1, y1, x2, y2)
 
     def _compute_visibility(self):
         """Compute which enemy squads are visible to the player."""
-        if not self.fog_enabled:
-            for sq in self.enemy_squads:
-                sq.visible = True
-            for g in self.enemy_generals:
-                g.visible = True
-            return
-
-        # Check if any player general has Scout Report active
-        scout_active = any(g._scout_active for g in self.player_generals if g.alive)
-        if scout_active:
-            for sq in self.enemy_squads:
-                sq.visible = True
-            for g in self.enemy_generals:
-                g.visible = True
-            return
-
-        # Build list of (x, y, vision_radius) for all player units
-        weather_vis = self.get_weather_modifiers()["vision"]
-        vision_sources = []
-        for sq in self.player_squads:
-            if not sq.is_destroyed:
-                cx, cy = sq.center
-                vision_sources.append((cx, cy, sq.vision_radius * weather_vis))
-        for g in self.player_generals:
-            if g.alive:
-                base_v = VISION_CAVALRY * weather_vis
-                vision_sources.append((g.x, g.y, base_v))
-
-        # Check each enemy squad
-        for sq in self.enemy_squads:
-            if sq.is_destroyed:
-                sq.visible = False
-                continue
-            cx, cy = sq.center
-            sq.visible = False
-            for vx, vy, vr in vision_sources:
-                d = distance(vx, vy, cx, cy)
-                if d <= vr and not self._is_los_blocked(vx, vy, cx, cy):
-                    sq.visible = True
-                    break
-
-        # Check each enemy general
-        for g in self.enemy_generals:
-            if not g.alive:
-                g.visible = False
-                continue
-            g.visible = False
-            for vx, vy, vr in vision_sources:
-                d = distance(vx, vy, g.x, g.y)
-                if d <= vr and not self._is_los_blocked(vx, vy, g.x, g.y):
-                    g.visible = True
-                    break
+        battle_environment.compute_visibility(self)
 
     def _resolve_collisions(self):
         """Resolve soldier-soldier collisions using spatial grid.
@@ -618,20 +395,11 @@ class BattleScene:
 
     def _deploy_companions(self, companions):
         """Deploy companion heroes as additional player generals."""
-        base_y = BATTLE_MAP_HEIGHT // 2
-        for i, comp_data in enumerate(companions):
-            offset_y = (i + 1) * 100 - (len(companions) * 50)
-            gen = General(
-                comp_data["name"], comp_data["stats"], 0,
-                200, base_y + offset_y,
-                player_class=comp_data.get("player_class"),
-            )
-            if "level" in comp_data:
-                gen.level = comp_data["level"]
-            gen._companion_name = comp_data["name"]  # tag for post-battle tracking
-            self.player_generals.append(gen)
-            self._companion_generals.append(gen)
-        self.all_generals = self.player_generals + self.enemy_generals
+        legacy_companions = [
+            companion.to_legacy_dict() if hasattr(companion, "to_legacy_dict") else companion
+            for companion in companions
+        ]
+        battle_runtime.deploy_companions(self, legacy_companions)
 
     def handle_event(self, event):
         self.camera.handle_event(event)
@@ -752,17 +520,7 @@ class BattleScene:
 
     def _handle_ability_key(self, key):
         """Activate general ability via Q/W/E/R hotkeys."""
-        if not self.selected_general:
-            return
-        g = self.selected_general
-        key_map = {pygame.K_q: 0, pygame.K_w: 1, pygame.K_e: 2, pygame.K_r: 3}
-        index = key_map.get(key, -1)
-        if index < 0:
-            return
-        friendly = self.player_squads if g.team == 0 else self.enemy_squads
-        enemy = self.enemy_squads if g.team == 0 else self.player_squads
-        if g.activate_ability(index, friendly, enemy):
-            get_audio().play("ability")
+        battle_input.handle_ability_key(self, key)
 
     # ── Spell Targeting ─────────────────────────────────────────────
 
@@ -856,349 +614,31 @@ class BattleScene:
         return success
 
     def _handle_left_click(self, pos):
-        # Check UI buttons first
-        if hasattr(self, '_ui_buttons') and self._handle_ui_click(pos):
-            return
-        wx, wy = self.camera.screen_to_world(*pos)
-        shift = pygame.key.get_mods() & pygame.KMOD_SHIFT
-
-        if not shift:
-            for sq in self.player_squads:
-                sq.selected = False
-            for g in self.player_generals:
-                g.selected = False
-            self.selected_squads = []
-            self.selected_general = None
-
-        for g in self.player_generals:
-            if not g.alive:
-                continue
-            if distance(wx, wy, g.x, g.y) < 20:
-                g.selected = True
-                self.selected_general = g
-                return
-
-        for sq in self.player_squads:
-            if sq.is_destroyed:
-                continue
-            bbox = sq.get_bounding_box()
-            if point_in_rect(wx, wy, *bbox):
-                sq.selected = True
-                if sq not in self.selected_squads:
-                    self.selected_squads.append(sq)
-                return
-
-        self.selecting = True
-        self.select_start = pos
-        self.select_end = pos
+        battle_input.handle_left_click(self, pos)
 
     def _finish_box_select(self, pos):
-        self.selecting = False
-        sx1, sy1 = self.camera.screen_to_world(*self.select_start)
-        sx2, sy2 = self.camera.screen_to_world(*pos)
-        min_x, min_y = min(sx1, sx2), min(sy1, sy2)
-        max_x, max_y = max(sx1, sx2), max(sy1, sy2)
-
-        if abs(pos[0] - self.select_start[0]) < 5:
-            return
-
-        for sq in self.player_squads:
-            if sq.is_destroyed:
-                continue
-            cx, cy = sq.center
-            if min_x <= cx <= max_x and min_y <= cy <= max_y:
-                sq.selected = True
-                if sq not in self.selected_squads:
-                    self.selected_squads.append(sq)
-
-        for g in self.player_generals:
-            if not g.alive:
-                continue
-            if min_x <= g.x <= max_x and min_y <= g.y <= max_y:
-                g.selected = True
-                self.selected_general = g
+        battle_input.finish_box_select(self, pos)
 
     def _handle_deployment_event(self, event):
         """Handle input during deployment phase."""
-        self.camera.handle_event(event)
-
-        if event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_RETURN or event.key == pygame.K_SPACE:
-                # Ready up - start the battle
-                self.deployment_phase = False
-                self._deploy_dragging = None
-                get_audio().play("click")
-                return
-
-        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            wx, wy = self.camera.screen_to_world(*event.pos)
-            # Check if clicking on a player squad to drag it
-            for sq in self.player_squads:
-                if sq.is_destroyed:
-                    continue
-                bbox = sq.get_bounding_box()
-                if point_in_rect(wx, wy, *bbox):
-                    self._deploy_dragging = sq
-                    sq.selected = True
-                    self.selected_squads = [sq]
-                    return
-
-        if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
-            self._deploy_dragging = None
-
-        if event.type == pygame.MOUSEMOTION and self._deploy_dragging:
-            wx, wy = self.camera.screen_to_world(*event.pos)
-            zx, zy, zw, zh = self.deploy_zone
-            # Clamp to deployment zone
-            wx = max(zx + 30, min(zx + zw - 30, wx))
-            wy = max(zy + 30, min(zy + zh - 30, wy))
-            # Move the squad
-            sq = self._deploy_dragging
-            dx = wx - sq.x
-            dy = wy - sq.y
-            sq.x = wx
-            sq.y = wy
-            sq.target_x = wx
-            sq.target_y = wy
-            for s in sq.alive_soldiers:
-                s.x += dx
-                s.y += dy
-
-        # Right-click during deployment: set facing
-        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 3:
-            self._right_click_pos = event.pos
-            self._right_click_world = self.camera.screen_to_world(*event.pos)
-            self._right_dragging = False
-            self._right_drag_pos = event.pos
-
-        if event.type == pygame.MOUSEBUTTONUP and event.button == 3:
-            if self._right_dragging and self.selected_squads:
-                # Set facing only (no move during deployment)
-                wx2, wy2 = self.camera.screen_to_world(*event.pos)
-                wx1, wy1 = self._right_click_world
-                facing = angle_between(wx1, wy1, wx2, wy2)
-                for sq in self.selected_squads:
-                    sq.facing_angle = facing
-            self._right_click_pos = None
-            self._right_dragging = False
-
-        if event.type == pygame.MOUSEMOTION and self._right_click_pos:
-            dx = event.pos[0] - self._right_click_pos[0]
-            dy = event.pos[1] - self._right_click_pos[1]
-            if (dx * dx + dy * dy) ** 0.5 > 15:
-                self._right_dragging = True
-            self._right_drag_pos = event.pos
+        battle_input.handle_deployment_event(self, event)
 
     def _draw_deployment(self, surface):
         """Draw deployment zone and instructions."""
-        zx, zy, zw, zh = self.deploy_zone
-        sx, sy = self.camera.world_to_screen(zx, zy)
-        sw = self.camera.scale(zw)
-        sh = self.camera.scale(zh)
-
-        # Semi-transparent deployment zone
-        zone_surf = pygame.Surface((int(sw), int(sh)), pygame.SRCALPHA)
-        zone_surf.fill((100, 150, 255, 30))
-        surface.blit(zone_surf, (int(sx), int(sy)))
-        pygame.draw.rect(surface, (100, 150, 255, 180),
-                         (int(sx), int(sy), int(sw), int(sh)), 2)
-
-        # "DEPLOYMENT ZONE" label
-        font = get_font(24)
-        label = font.render("DEPLOYMENT ZONE", True, (150, 200, 255))
-        surface.blit(label, (int(sx) + int(sw) // 2 - label.get_width() // 2,
-                             int(sy) + 5))
-
-        # Instructions at top
-        big_font = get_font(36)
-        title = big_font.render("DEPLOYMENT PHASE", True, GOLD)
-        surface.blit(title, (SCREEN_WIDTH // 2 - title.get_width() // 2, 50))
-
-        inst_font = get_font(22)
-        instructions = [
-            "Drag units to position them within the blue zone",
-            "Right-click + drag to set facing direction",
-            "Press ENTER or SPACE to start the battle",
-        ]
-        for i, line in enumerate(instructions):
-            text = inst_font.render(line, True, (200, 220, 255))
-            surface.blit(text, (SCREEN_WIDTH // 2 - text.get_width() // 2, 90 + i * 24))
-
-        # Ready button hint
-        ready_text = big_font.render("[ PRESS ENTER TO BEGIN ]", True, (200, 255, 200))
-        surface.blit(ready_text,
-                     (SCREEN_WIDTH // 2 - ready_text.get_width() // 2,
-                      SCREEN_HEIGHT - 60))
+        battle_input.draw_deployment(self, surface)
 
     def _apply_facing_from_drag(self, release_pos):
         """Set selected squads' facing based on right-click drag direction."""
-        if not self._right_click_pos:
-            return
-        wx1, wy1 = self._right_click_world
-        wx2, wy2 = self.camera.screen_to_world(*release_pos)
-        facing = angle_between(wx1, wy1, wx2, wy2)
-        for sq in self.selected_squads:
-            sq.facing_angle = facing
-            # Also move to the click position
-            sq.give_move_order(wx1, wy1)
-            sq.facing_angle = facing  # override the angle set by give_move_order
+        battle_input.apply_facing_from_drag(self, release_pos)
 
     def _handle_right_click(self, pos):
-        wx, wy = self.camera.screen_to_world(*pos)
-
-        # Spell casting mode: right-click casts the selected spell
-        if self._try_spell_cast(wx, wy):
-            return
-
-        target_squad = None
-        for sq in self.enemy_squads:
-            if sq.is_destroyed or (self.fog_enabled and not sq.visible):
-                continue
-            bbox = sq.get_bounding_box()
-            if point_in_rect(wx, wy, *bbox):
-                target_squad = sq
-                break
-
-        target_general = None
-        for g in self.enemy_generals:
-            if not g.alive or (self.fog_enabled and not g.visible):
-                continue
-            if distance(wx, wy, g.x, g.y) < 20:
-                target_general = g
-                break
-
-        # Selected general + enemy general = duel challenge
-        if target_general and self.selected_general:
-            self.selected_general.challenge_duel(target_general)
-            return
-
-        # Selected squads targeting
-        if self.selected_squads:
-            if target_squad:
-                for sq in self.selected_squads:
-                    sq.give_attack_order(target_squad)
-            elif target_general:
-                # Squads move to attack the enemy general's position
-                for sq in self.selected_squads:
-                    sq.give_move_order(target_general.x, target_general.y)
-            else:
-                count = len(self.selected_squads)
-                for i, sq in enumerate(self.selected_squads):
-                    offset_y = (i - count / 2.0) * 60
-                    sq.give_move_order(wx, wy + offset_y)
-
-        # Selected general with no enemy general target = move or attack order
-        if self.selected_general and not target_general:
-            if target_squad:
-                # General attacks the enemy squad
-                self.selected_general.give_attack_order(target_squad)
-            else:
-                self.selected_general.give_move_order(wx, wy)
+        battle_input.handle_right_click(self, pos)
 
     def update(self):
-        if self.paused or self.deployment_phase:
-            self.camera.update()
-            return
-
-        for _ in range(self.speed_multiplier):
-            self._tick()
-
-        self.camera.update()
-        self.battle_timer += 1
+        battle_runtime.update_battle(self)
 
     def _tick(self):
-        # Compute fog of war visibility
-        self._compute_visibility()
-
-        # Snapshot states for sound triggers
-        prev_states = {id(sq): sq.state for sq in self.all_squads}
-        prev_routed = {id(sq) for sq in self.all_squads
-                       if sq.state == SquadState.ROUTED}
-
-        # Apply terrain modifiers to all squads before updates
-        for sq in self.all_squads:
-            mods = self.get_terrain_modifiers(sq)
-            # D2: Season exhaustion multiplier
-            mods["exhaustion_mult"] = self.season_exhaustion_mult
-            sq.terrain_mods = mods
-
-        # Delegate squad and general updates to CombatEngine (with fallback)
-        if self._combat_engine is not None:
-            self._combat_engine.step()
-        else:
-            for sq in self.all_squads:
-                sq.update(self.all_squads)
-            for g in self.player_generals:
-                g.update(self.player_squads, self.enemy_squads)
-            for g in self.enemy_generals:
-                g.update(self.enemy_squads, self.player_squads)
-
-        # D1: Push soldiers out of water (coastal maps)
-        if self.terrain_type == "coastal":
-            for sq in self.all_squads:
-                for s in sq.soldiers:
-                    if s.alive and self.is_water_at(s.x, s.y):
-                        # Push back to land edge
-                        for t in self.terrain:
-                            if t["type"] == "water":
-                                rx, ry, rw, rh = t["rect"]
-                                if rx <= s.x <= rx + rw and ry <= s.y <= ry + rh:
-                                    s.x = rx - 5  # push to left edge of water
-
-        # Resolve soldier-soldier collisions
-        self._resolve_collisions()
-
-        self._enemy_ai()
-
-        # Sound triggers: charge impact and rout
-        audio = get_audio()
-        for sq in self.all_squads:
-            old_state = prev_states.get(id(sq))
-            # Charge -> Fighting = impact sound
-            if old_state == SquadState.CHARGING and sq.state == SquadState.FIGHTING:
-                audio.play("charge")
-            # Newly routed
-            if sq.state == SquadState.ROUTED and id(sq) not in prev_routed:
-                audio.play("rout")
-            # Ranged firing (occasional)
-            if sq.state == SquadState.FIRING and self.battle_timer % 60 == 0:
-                audio.play("arrow_volley")
-
-        # XP is now awarded post-battle, not during battle (A6 fix)
-        # Track kills for post-battle XP calculation only
-
-        # Check general deaths
-        dead_generals = [g for g in self.all_generals if not g.alive]
-        for g in dead_generals:
-            if g.team == 0:
-                g.on_death(self.player_squads)
-                if g in self.player_generals:
-                    self.player_generals.remove(g)
-            else:
-                g.on_death(self.enemy_squads)
-                if g in self.enemy_generals:
-                    self.enemy_generals.remove(g)
-            self.all_generals.remove(g)
-            self._dead_generals.append(g)
-
-        self.selected_squads = [s for s in self.selected_squads if not s.is_destroyed]
-
-        prev_result = self.result
-        player_alive = any(not sq.is_destroyed for sq in self.player_squads)
-        enemy_alive = any(not sq.is_destroyed for sq in self.enemy_squads)
-        if not enemy_alive and player_alive:
-            self.result = BattleResult.PLAYER_WIN
-        elif not player_alive and enemy_alive:
-            self.result = BattleResult.PLAYER_LOSS
-        elif not player_alive and not enemy_alive:
-            self.result = BattleResult.PLAYER_LOSS
-
-        # Victory/defeat sound
-        if prev_result == BattleResult.ONGOING and self.result != BattleResult.ONGOING:
-            if self.result == BattleResult.PLAYER_WIN:
-                audio.play("victory")
-            else:
-                audio.play("defeat")
+        battle_runtime.tick_battle(self)
 
     def _enemy_ai(self):
         """Delegate to AIEngine if wired, otherwise no-op."""
@@ -1490,418 +930,40 @@ class BattleScene:
     # ─── UI Button System ───
     def _make_button(self, x, y, w, h, text, active=False, enabled=True):
         """Return a button dict for the UI system."""
-        return {"x": x, "y": y, "w": w, "h": h, "text": text,
-                "active": active, "enabled": enabled}
+        return battle_ui.make_button(x, y, w, h, text, active=active, enabled=enabled)
 
     def _draw_button(self, surface, btn, font):
         """Draw a single UI button."""
-        x, y, w, h = btn["x"], btn["y"], btn["w"], btn["h"]
-        if btn["active"]:
-            bg_color = (60, 120, 60, 200)
-            text_color = (200, 255, 200)
-            border_color = (100, 200, 100)
-        elif not btn["enabled"]:
-            bg_color = (40, 40, 40, 120)
-            text_color = (80, 80, 80)
-            border_color = (60, 60, 60)
-        else:
-            bg_color = (50, 50, 60, 180)
-            text_color = (200, 200, 210)
-            border_color = (100, 100, 120)
-
-        btn_surf = pygame.Surface((w, h), pygame.SRCALPHA)
-        btn_surf.fill(bg_color)
-        surface.blit(btn_surf, (x, y))
-        pygame.draw.rect(surface, border_color, (x, y, w, h), 1)
-        text_surf = font.render(btn["text"], True, text_color)
-        surface.blit(text_surf, (x + w // 2 - text_surf.get_width() // 2,
-                                  y + h // 2 - text_surf.get_height() // 2))
-        return pygame.Rect(x, y, w, h)
+        return battle_ui.draw_button(surface, btn, font)
 
     def _point_in_button(self, pos, btn):
-        return (btn["x"] <= pos[0] <= btn["x"] + btn["w"] and
-                btn["y"] <= pos[1] <= btn["y"] + btn["h"])
+        return battle_ui.point_in_button(pos, btn)
 
     def _handle_ui_click(self, pos):
         """Handle clicks on bottom panel UI buttons. Returns True if handled."""
-        if not self._ui_buttons:
-            return False
-        for btn_id, btn in self._ui_buttons.items():
-            if not btn["enabled"]:
-                continue
-            if self._point_in_button(pos, btn):
-                self._on_ui_button_click(btn_id)
-                return True
-        # Check unit card clicks
-        for i, card_rect in enumerate(self._unit_card_rects):
-            if card_rect.collidepoint(pos):
-                self._on_unit_card_click(i)
-                return True
-        return False
+        return battle_ui.handle_ui_click(self, pos)
 
     def _on_ui_button_click(self, btn_id):
         """Handle a UI button being clicked."""
-        if btn_id == "pause":
-            self.paused = not self.paused
-        elif btn_id == "speed1":
-            self.speed_multiplier = 1
-        elif btn_id == "speed2":
-            self.speed_multiplier = 2
-        elif btn_id == "speed3":
-            self.speed_multiplier = 4
-        elif btn_id == "fog_toggle":
-            self.fog_enabled = not self.fog_enabled
-        elif btn_id == "walk":
-            for sq in self.selected_squads:
-                sq.movement_mode = MOVE_MODE_WALK
-        elif btn_id == "march":
-            for sq in self.selected_squads:
-                sq.movement_mode = MOVE_MODE_MARCH
-        elif btn_id == "run":
-            for sq in self.selected_squads:
-                sq.movement_mode = MOVE_MODE_RUN
-        elif btn_id == "defensive":
-            for sq in self.selected_squads:
-                sq.defensive_stance = not sq.defensive_stance
-                if sq.defensive_stance:
-                    sq.defensive_anchor_x = sq.x
-                    sq.defensive_anchor_y = sq.y
-        elif btn_id == "skirmish":
-            for sq in self.selected_squads:
-                if sq.is_ranged:
-                    sq.skirmish_stance = not sq.skirmish_stance
-        elif btn_id == "fire":
-            for sq in self.selected_squads:
-                if sq.is_ranged:
-                    sq.fire_at_will = not sq.fire_at_will
-        elif btn_id.startswith("form_"):
-            form_map = {"form_line": Formation.LINE, "form_column": Formation.COLUMN,
-                        "form_square": Formation.SQUARE, "form_loose": Formation.LOOSE,
-                        "form_wedge": Formation.WEDGE}
-            if btn_id in form_map:
-                for sq in self.selected_squads:
-                    sq.set_formation(form_map[btn_id])
-        elif btn_id.startswith("ability_"):
-            idx = int(btn_id.split("_")[1])
-            if self.selected_general:
-                friendly = self.player_squads if self.selected_general.team == 0 else self.enemy_squads
-                enemy = self.enemy_squads if self.selected_general.team == 0 else self.player_squads
-                if self.selected_general.activate_ability(idx, friendly, enemy):
-                    get_audio().play("ability")
+        battle_ui.on_ui_button_click(self, btn_id)
 
     def _on_unit_card_click(self, index):
         """Select a player squad by clicking its unit card."""
-        alive_squads = [sq for sq in self.player_squads if not sq.is_destroyed]
-        if index < len(alive_squads):
-            for sq in self.player_squads:
-                sq.selected = False
-            for g in self.player_generals:
-                g.selected = False
-            self.selected_general = None
-            sq = alive_squads[index]
-            sq.selected = True
-            self.selected_squads = [sq]
+        battle_ui.on_unit_card_click(self, index)
 
     def _draw_hud(self, surface):
-        font = get_font(20)
-        small_font = get_font(16)
-        btn_font = get_font(15)
-        self._ui_buttons = {}
-        self._unit_card_rects = []
-
-        # ── Top bar ──
-        bar_surf = pygame.Surface((SCREEN_WIDTH, 36), pygame.SRCALPHA)
-        bar_surf.fill((0, 0, 0, 160))
-        surface.blit(bar_surf, (0, 0))
-
-        minutes = self.battle_timer // (60 * 60)
-        seconds = (self.battle_timer // 60) % 60
-        timer_text = font.render(f"Battle: {minutes:02d}:{seconds:02d}", True, WHITE)
-        surface.blit(timer_text, (SCREEN_WIDTH // 2 - timer_text.get_width() // 2, 8))
-
-        # Speed buttons in top bar
-        for i, (label, spd, btn_id) in enumerate([("1x", 1, "speed1"),
-                                                    ("2x", 2, "speed2"),
-                                                    ("4x", 4, "speed3")]):
-            bx = SCREEN_WIDTH // 2 + 80 + i * 36
-            btn = self._make_button(bx, 4, 32, 26, label,
-                                     active=(self.speed_multiplier == spd))
-            self._ui_buttons[btn_id] = btn
-            self._draw_button(surface, btn, btn_font)
-
-        # Pause button
-        pause_x = SCREEN_WIDTH // 2 + 80 + 3 * 36 + 8
-        pause_btn = self._make_button(pause_x, 4, 55, 26,
-                                       "PAUSED" if self.paused else "Pause",
-                                       active=self.paused)
-        self._ui_buttons["pause"] = pause_btn
-        self._draw_button(surface, pause_btn, btn_font)
-
-        # Fog of war toggle button
-        fog_x = pause_x + 60
-        fog_btn = self._make_button(fog_x, 4, 65, 26,
-                                     "FOG: ON" if self.fog_enabled else "FOG: OFF",
-                                     active=self.fog_enabled)
-        self._ui_buttons["fog_toggle"] = fog_btn
-        self._draw_button(surface, fog_btn, btn_font)
-
-        if self.weather != "clear":
-            weather_colors = {
-                "rain": (100, 150, 255), "fog": (180, 180, 200),
-                "mud": (160, 120, 60), "wind": (180, 200, 160),
-            }
-            wc = weather_colors.get(self.weather, WHITE)
-            w_text = font.render(f"Weather: {self.weather.title()}", True, wc)
-            surface.blit(w_text, (SCREEN_WIDTH // 2 - 250, 8))
-
-        p_alive = sum(sq.alive_count for sq in self.player_squads)
-        e_alive = sum(sq.alive_count for sq in self.enemy_squads)
-        p_text = font.render(f"Your Army: {p_alive}", True, TEAM_COLORS_LIGHT[0])
-        e_text = font.render(f"Enemy Army: {e_alive}", True, TEAM_COLORS_LIGHT[1])
-        surface.blit(p_text, (10, 8))
-        surface.blit(e_text, (SCREEN_WIDTH - e_text.get_width() - 10, 8))
-
-        # ── Bottom panel ──
-        panel_h = 110
-        panel_y = SCREEN_HEIGHT - panel_h
-        panel_surf = pygame.Surface((SCREEN_WIDTH, panel_h), pygame.SRCALPHA)
-        panel_surf.fill((0, 0, 0, 180))
-        surface.blit(panel_surf, (0, panel_y))
-        pygame.draw.line(surface, (80, 80, 100), (0, panel_y), (SCREEN_WIDTH, panel_y), 1)
-
-        # Unit cards along bottom
-        self._draw_unit_cards(surface, panel_y, small_font, btn_font)
-
-        # Selected unit info + buttons
-        if self.selected_squads:
-            self._draw_selection_panel(surface, font, small_font, btn_font, panel_y)
-        elif self.selected_general:
-            self._draw_general_panel(surface, font, small_font, btn_font, panel_y)
-
-        if self.result != BattleResult.ONGOING:
-            self._draw_result_banner(surface)
+        battle_ui.draw_hud(self, surface)
 
     def _draw_unit_cards(self, surface, panel_y, small_font, btn_font):
         """Draw clickable unit cards along the bottom of the screen."""
-        alive_squads = [sq for sq in self.player_squads if not sq.is_destroyed]
-        card_w = 58
-        card_h = 40
-        card_y = panel_y + 65
-        start_x = 10
-        self._unit_card_rects = []
-
-        for i, sq in enumerate(alive_squads):
-            cx = start_x + i * (card_w + 4)
-            if cx + card_w > SCREEN_WIDTH - 10:
-                break
-
-            is_selected = sq in self.selected_squads
-            bg_color = (60, 100, 60, 200) if is_selected else (40, 40, 50, 180)
-            border_color = (100, 200, 100) if is_selected else (70, 70, 90)
-
-            card_surf = pygame.Surface((card_w, card_h), pygame.SRCALPHA)
-            card_surf.fill(bg_color)
-            surface.blit(card_surf, (cx, card_y))
-            pygame.draw.rect(surface, border_color, (cx, card_y, card_w, card_h), 1)
-
-            # Unit type abbreviation
-            abbrev = sq.unit_stats.name[:5]
-            text = btn_font.render(abbrev, True, TEAM_COLORS_LIGHT[sq.team])
-            surface.blit(text, (cx + 2, card_y + 2))
-
-            # Count
-            count_text = btn_font.render(f"{sq.alive_count}", True, WHITE)
-            surface.blit(count_text, (cx + 2, card_y + 15))
-
-            # Mini morale bar
-            bar_x = cx + 2
-            bar_y_pos = card_y + card_h - 8
-            bar_w = card_w - 4
-            pygame.draw.rect(surface, (40, 40, 40), (bar_x, bar_y_pos, bar_w, 4))
-            morale_w = int(bar_w * sq.morale / 100)
-            morale_color = (50, 200, 50) if sq.morale > 50 else (
-                (220, 200, 50) if sq.morale > 25 else (200, 50, 50))
-            pygame.draw.rect(surface, morale_color, (bar_x, bar_y_pos, morale_w, 4))
-
-            self._unit_card_rects.append(pygame.Rect(cx, card_y, card_w, card_h))
+        battle_ui.draw_unit_cards(self, surface, panel_y, small_font, btn_font)
 
     def _draw_selection_panel(self, surface, font, small_font, btn_font, panel_y):
         """Draw selected unit info with clickable stance/mode buttons."""
-        # Unit info area (left side of bottom panel)
-        y = panel_y + 4
-        sq = self.selected_squads[0] if len(self.selected_squads) == 1 else None
-
-        if sq:
-            # Single unit selected — detailed view
-            info = (f"{sq.unit_stats.name}: {sq.alive_count}/{sq.initial_count}"
-                    f"  Morale:{int(sq.morale)}%  {sq.exhaustion_display}")
-            text = small_font.render(info, True, TEAM_COLORS_LIGHT[sq.team])
-            surface.blit(text, (10, y))
-            y += 16
-            ws = sq.unit_stats.weapon_strength
-            ap = sq.unit_stats.armor_penetration
-            extra = f"WS:{ws} AP:{ap}%"
-            if sq.unit_stats.ranged_strength > 0:
-                extra += f"  RS:{sq.unit_stats.ranged_strength} RAP:{sq.unit_stats.ranged_armor_penetration}%"
-            if sq.is_braced:
-                extra += "  BRACED"
-            if sq.max_mana > 0:
-                extra += f"  Mana:{int(sq.mana)}/{sq.max_mana}"
-            text2 = small_font.render(extra, True, (160, 160, 160))
-            surface.blit(text2, (10, y))
-            # Spell info line
-            if sq.max_mana > 0 and sq.available_spells:
-                y += 16
-                sp = sq.available_spells[sq._selected_spell_index] if sq._selected_spell_index < len(sq.available_spells) else sq.available_spells[0]
-                cd = sq.spell_cooldowns.get(sp.name, 0)
-                cd_s = f" CD:{cd // 60}s" if cd > 0 else " READY"
-                spell_info = f"[G] Cast: {sp.name} ({sp.mana_cost}mp){cd_s}  [Tab] cycle"
-                spell_color = (100, 180, 255) if sq._spell_targeting else (140, 140, 180)
-                text3 = small_font.render(spell_info, True, spell_color)
-                surface.blit(text3, (10, y))
-        else:
-            # Multiple units — summary
-            count = len(self.selected_squads)
-            total = sum(sq.alive_count for sq in self.selected_squads)
-            text = font.render(f"{count} units selected ({total} soldiers)", True, WHITE)
-            surface.blit(text, (10, y))
-
-        # ── Clickable buttons (right side of bottom panel) ──
-        btn_y = panel_y + 4
-        btn_x = 350
-
-        # Movement mode buttons
-        mode_label = small_font.render("Move:", True, (150, 150, 160))
-        surface.blit(mode_label, (btn_x, btn_y + 2))
-        btn_x += 40
-        active_mode = self.selected_squads[0].movement_mode if self.selected_squads else MOVE_MODE_MARCH
-        for label, mode, bid in [("Walk", MOVE_MODE_WALK, "walk"),
-                                  ("March", MOVE_MODE_MARCH, "march"),
-                                  ("Run", MOVE_MODE_RUN, "run")]:
-            btn = self._make_button(btn_x, btn_y, 44, 20, label,
-                                     active=(active_mode == mode))
-            self._ui_buttons[bid] = btn
-            self._draw_button(surface, btn, btn_font)
-            btn_x += 48
-
-        # Stance buttons
-        btn_x += 8
-        stance_label = small_font.render("Stance:", True, (150, 150, 160))
-        surface.blit(stance_label, (btn_x, btn_y + 2))
-        btn_x += 50
-        any_def = any(sq.defensive_stance for sq in self.selected_squads)
-        btn = self._make_button(btn_x, btn_y, 60, 20, "Defensive", active=any_def)
-        self._ui_buttons["defensive"] = btn
-        self._draw_button(surface, btn, btn_font)
-        btn_x += 64
-
-        any_skirm = any(sq.skirmish_stance for sq in self.selected_squads)
-        has_ranged = any(sq.is_ranged for sq in self.selected_squads)
-        btn = self._make_button(btn_x, btn_y, 58, 20, "Skirmish",
-                                 active=any_skirm, enabled=has_ranged)
-        self._ui_buttons["skirmish"] = btn
-        self._draw_button(surface, btn, btn_font)
-        btn_x += 62
-
-        any_fire = any(sq.fire_at_will for sq in self.selected_squads if sq.is_ranged)
-        btn = self._make_button(btn_x, btn_y, 48, 20, "Fire",
-                                 active=any_fire, enabled=has_ranged)
-        self._ui_buttons["fire"] = btn
-        self._draw_button(surface, btn, btn_font)
-
-        # Formation buttons (second row)
-        btn_y2 = panel_y + 30
-        btn_x2 = 350
-        form_label = small_font.render("Formation:", True, (150, 150, 160))
-        surface.blit(form_label, (btn_x2, btn_y2 + 2))
-        btn_x2 += 72
-        active_form = self.selected_squads[0].formation if self.selected_squads else Formation.LINE
-        for label, form, bid in [("Line", Formation.LINE, "form_line"),
-                                  ("Column", Formation.COLUMN, "form_column"),
-                                  ("Square", Formation.SQUARE, "form_square"),
-                                  ("Loose", Formation.LOOSE, "form_loose"),
-                                  ("Wedge", Formation.WEDGE, "form_wedge")]:
-            btn = self._make_button(btn_x2, btn_y2, 48, 20, label,
-                                     active=(active_form == form))
-            self._ui_buttons[bid] = btn
-            self._draw_button(surface, btn, btn_font)
-            btn_x2 += 52
+        battle_ui.draw_selection_panel(self, surface, font, small_font, btn_font, panel_y)
 
     def _draw_general_panel(self, surface, font, small_font, btn_font, panel_y):
-        g = self.selected_general
-
-        y = panel_y + 4
-        header = font.render(f"{g.name} ({g.general_type}) Lv{g.level}", True, GOLD)
-        surface.blit(header, (10, y))
-        y += 20
-        hp = small_font.render(
-            f"HP: {int(g.health)}/{int(g.max_health)}  ATK:{g.melee_attack} DEF:{g.melee_defense}"
-            f"  Kills:{g.kills} Duels:{g.duels_won}",
-            True, WHITE)
-        surface.blit(hp, (10, y))
-        y += 16
-
-        if g.duel_state == DuelState.ACTIVE:
-            duel_text = small_font.render(
-                f"DUELING {g.duel_opponent.name}! Score: {g.duel_score}-{g.duel_opponent.duel_score}",
-                True, GOLD)
-            surface.blit(duel_text, (10, y))
-
-        # Spell info for caster generals
-        if g.max_mana > 0 and g.available_spells:
-            mana_text = small_font.render(
-                f"Mana: {int(g.mana)}/{g.max_mana}", True, (100, 180, 255))
-            surface.blit(mana_text, (10, y))
-            y += 16
-            sp = g.available_spells[g._selected_spell_index] if g._selected_spell_index < len(g.available_spells) else g.available_spells[0]
-            cd = g.spell_cooldowns.get(sp.name, 0)
-            cd_s = f" CD:{cd // 60}s" if cd > 0 else " READY"
-            spell_info = f"[G] Cast: {sp.name} ({sp.mana_cost}mp){cd_s}  [Tab] cycle"
-            spell_color = (100, 180, 255) if g._spell_targeting else (140, 140, 180)
-            text3 = small_font.render(spell_info, True, spell_color)
-            surface.blit(text3, (10, y))
-
-        # Ability buttons (right side)
-        btn_x = 400
-        btn_y = panel_y + 4
-        keys = ["Q", "W", "E", "R"]
-        for i, ability in enumerate(g.available_abilities):
-            if i >= 4:
-                break
-            cd_text = ""
-            if not ability.ready:
-                cd_secs = ability.cooldown // 60
-                cd_text = f" {cd_secs}s"
-            label = f"[{keys[i]}] {ability.name}{cd_text}"
-            btn = self._make_button(btn_x, btn_y + i * 24, 200, 20, label,
-                                     active=False, enabled=ability.ready)
-            self._ui_buttons[f"ability_{i}"] = btn
-            self._draw_button(surface, btn, btn_font)
-
-        # Locked abilities
-        lock_y = btn_y + len(g.available_abilities) * 24
-        for ability in g.abilities:
-            if ability.level_required > g.level:
-                text = small_font.render(
-                    f"Lv{ability.level_required}: {ability.name} (Locked)",
-                    True, (80, 80, 80))
-                surface.blit(text, (btn_x, lock_y))
-                lock_y += 16
+        battle_ui.draw_general_panel(self, surface, font, small_font, btn_font, panel_y)
 
     def _draw_result_banner(self, surface):
-        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
-        overlay.fill((0, 0, 0, 100))
-        surface.blit(overlay, (0, 0))
-
-        big_font = get_font(72)
-        if self.result == BattleResult.PLAYER_WIN:
-            text = big_font.render("VICTORY!", True, GOLD)
-        else:
-            text = big_font.render("DEFEAT!", True, (200, 50, 50))
-        surface.blit(text, (SCREEN_WIDTH // 2 - text.get_width() // 2,
-                            SCREEN_HEIGHT // 2 - 50))
-
-        font = get_font(28)
-        sub = font.render("Press ENTER to continue", True, WHITE)
-        surface.blit(sub, (SCREEN_WIDTH // 2 - sub.get_width() // 2,
-                           SCREEN_HEIGHT // 2 + 30))
+        battle_ui.draw_result_banner(self, surface)

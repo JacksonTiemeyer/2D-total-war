@@ -3,6 +3,7 @@
 import math
 import random
 import pygame
+from core.contracts import ArmyBattlePayload, GeneralBattlePayload
 from core.settings import (
     ARMY_ICON_RADIUS, CAMPAIGN_MOVE_SPEED,
     TEAM_COLORS, TEAM_COLORS_LIGHT, WHITE, GOLD, DARK_GREY,
@@ -161,6 +162,10 @@ class Army:
 
         Uses current_count instead of max squad_size for understrength squads.
         """
+        return self.get_battle_payload(player_class=player_class).to_legacy_dict()
+
+    def get_battle_payload(self, player_class=None):
+        """Return a typed battle deployment payload for this army."""
         squad_list = []
         for sq in self.squads:
             if sq.current_count > 0:
@@ -174,18 +179,16 @@ class Army:
                     "exhaustion_mult": rank[5],
                 }
                 squad_list.append((sq.unit_stats, sq.current_count, vet_data))
-        gen_data = {
-            "name": self.general_name,
-            "stats": self.general_stats,
-            "xp": self.general_xp,
-            "level": self.general_level,
-        }
-        if player_class:
-            gen_data["player_class"] = player_class
-        return {
-            "squads": squad_list,
-            "general": gen_data,
-        }
+        return ArmyBattlePayload(
+            squads=squad_list,
+            general=GeneralBattlePayload(
+                name=self.general_name,
+                stats=self.general_stats,
+                xp=self.general_xp,
+                level=self.general_level,
+                player_class=player_class,
+            ),
+        )
 
     def apply_battle_results(self, battle_scene):
         """Read battle results and update campaign squads."""

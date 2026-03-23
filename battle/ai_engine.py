@@ -35,10 +35,7 @@ class AIEngine:
             terrain: Optional terrain data.
             weather: Optional weather string.
         """
-        try:
-            self._run_role_ai(all_squads, player_generals, enemy_generals)
-        except Exception:
-            pass
+        self._run_role_ai(all_squads, player_generals, enemy_generals)
 
     def _run_role_ai(self, all_squads, player_generals, enemy_generals):
         """Role-based AI: melee advances, cavalry flanks, ranged stays back."""

@@ -14,6 +14,7 @@ from data.unit_types import (
 SAVE_DIR = os.path.join(str(Path.home()), ".2d-total-war")
 SAVE_FILE = os.path.join(SAVE_DIR, "save.json")
 SAVE_VERSION = 2  # Bumped for Phase 2 additions
+SUPPORTED_SAVE_VERSIONS = (1, 2)
 
 # Build name -> UnitStats lookup (includes all racial and specialty units)
 _UNIT_LOOKUP = {u.name: u for u in ALL_RECRUITABLE}
@@ -108,7 +109,7 @@ def load_campaign():
     except (json.JSONDecodeError, IOError):
         return None
     # Accept version 1 (legacy) and 2 (current)
-    if data.get("version", 0) not in (1, 2):
+    if data.get("version", 0) not in SUPPORTED_SAVE_VERSIONS:
         return None
     return data
 

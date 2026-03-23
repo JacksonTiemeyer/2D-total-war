@@ -14,6 +14,7 @@ Features:
 import math
 import random
 import pygame
+from campaign.runtime import consume_pending_battle, queue_pending_battle, update_campaign
 from core.settings import (
     SCREEN_WIDTH, SCREEN_HEIGHT,
     CAMPAIGN_MAP_WIDTH, CAMPAIGN_MAP_HEIGHT,
@@ -95,7 +96,7 @@ class CampaignScene:
         self.show_quest_log = False
         self.show_army_panel = False
         self._diplomacy_scroll = 0  # scroll offset for diplomacy panel
-        self.pending_battle = None  # (player_army, enemy_army, terrain_type) tuple
+        self.pending_battle = None  # PendingBattle handoff contract
         self._siege_settlement = None  # settlement being besieged
         self._selected_army = None     # clicked NPC army for info display
         self._pending_map_interaction = None
@@ -631,7 +632,7 @@ class CampaignScene:
                 battle_x = (self.player_army.x + army.x) / 2
                 battle_y = (self.player_army.y + army.y) / 2
                 terrain_type = self._get_terrain_at_position(battle_x, battle_y)
-                self.pending_battle = (self.player_army, army, terrain_type)
+                queue_pending_battle(self, army, terrain_type)
                 self.paused = True
             else:
                 self._queue_map_interaction("army", army, army.x, army.y)
@@ -694,7 +695,7 @@ class CampaignScene:
                     terrain_type = self._get_terrain_at_position(s.x, s.y)
                     # Create a garrison army for the siege
                     garrison = self._create_garrison_army(s)
-                    self.pending_battle = (self.player_army, garrison, terrain_type)
+                    queue_pending_battle(self, garrison, terrain_type)
                     self._siege_settlement = s  # track which settlement we're sieging
                     self.paused = True
                     self._add_notification(f"Laying siege to {s.name}!")
@@ -1283,89 +1284,7 @@ class CampaignScene:
         self._add_notification("Game saved!")
 
     def update(self):
-        self.camera.update()
-
-        # D2: Apply seasonal movement penalty
-        season = self._get_current_season()
-        base_speed = CAMPAIGN_MOVE_SPEED
-        if season == SEASON_WINTER:
-            effective_speed = base_speed * SEASON_WINTER_MOVE_PENALTY
-        elif season == SEASON_SUMMER:
-            effective_speed = base_speed
-        else:
-            effective_speed = base_speed
-        # Apply speed to all armies
-        for army in self.armies:
-            army.speed = effective_speed
-            # D2: Desert factions get summer speed bonus
-            if season == SEASON_SUMMER and army.team == 3:  # Desert Raiders
-                army.speed = base_speed * SEASON_SUMMER_DESERT_SPEED_BONUS
-            army.update_campaign_context(
-                self.settlements, self._get_terrain_at_position(army.x, army.y))
-
-        # Pause input lock: do not advance player movement while paused.
-        if not self.paused:
-            self.player_army.update()
-            self._update_pending_map_interaction()
-            self.player_army.update_campaign_context(
-                self.settlements, self._get_terrain_at_position(self.player_army.x, self.player_army.y))
-            self.player_army.current_status = "Marching" if self.player_army.moving else "Idle"
-        else:
-            if self.settlement_interaction:
-                self.player_army.current_status = f"In {self.settlement_interaction.settlement.name}"
-            else:
-                self.player_army.current_status = "Paused"
-
-        # Tick save notification
-        if hasattr(self, '_save_notification_timer') and self._save_notification_timer > 0:
-            self._save_notification_timer -= 1
-
-        # Update notifications
-        self.notifications = [(text, timer - 1) for text, timer in self.notifications if timer > 1]
-
-        # D6: Tick prisoner action message timer
-        if getattr(self, 'prisoner_action_timer', 0) > 0:
-            self.prisoner_action_timer -= 1
-            if self.prisoner_action_timer <= 0:
-                self.prisoner_action_msg = None
-
-        # Real-time campaign tick (B1)
-        if not self.paused:
-            speed = self.campaign_speed
-            for _ in range(speed):
-                self.day_ticks += 1
-
-                # Process AI movement every few ticks
-                if self.day_ticks % 10 == 0:
-                    self._process_ai_movement()
-
-                # End of day
-                if self.day_ticks >= CAMPAIGN_TICKS_PER_DAY:
-                    self.day_ticks = 0
-                    self._process_day()
-
-        # Fog needs update when player moves (and we're not paused).
-        if not self.paused and self.player_army.moving:
-            self._fog_needs_update = True
-
-        # Check for collisions with enemy armies -> trigger battle
-        for army in self.armies:
-            if army.is_player or army.team == 0:
-                continue
-            if not self._are_hostile(0, army.team):
-                continue
-            # B13: Only trigger if army is visible (not in fog)
-            if not self._is_visible(army.x, army.y):
-                continue
-            if distance(self.player_army.x, self.player_army.y,
-                        army.x, army.y) < 25:
-                # D1: Detect terrain at battle location
-                battle_x = (self.player_army.x + army.x) / 2
-                battle_y = (self.player_army.y + army.y) / 2
-                terrain_type = self._get_terrain_at_position(battle_x, battle_y)
-                self.pending_battle = (self.player_army, army, terrain_type)
-                self.paused = True  # Auto-pause on battle contact
-                return
+        update_campaign(self)
 
     def _is_visible(self, x, y):
         """B13: Check if a world position is visible (not in fog)."""
@@ -1411,9 +1330,7 @@ class CampaignScene:
         self.trade_warning = "Trade network fragmented: " + ", ".join(disconnected)
 
     def get_pending_battle(self):
-        battle = self.pending_battle
-        self.pending_battle = None
-        return battle
+        return consume_pending_battle(self)
 
     def remove_army(self, army, player_caused=False):
         if army in self.armies:

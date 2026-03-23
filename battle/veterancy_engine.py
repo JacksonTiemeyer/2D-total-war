@@ -52,13 +52,10 @@ class VeterancyEngine:
         if not hasattr(general, 'xp'):
             return
         general.xp += amount
-        try:
-            from battle.abilities import level_from_xp
-            next_level = level_from_xp(general.xp)
-            if hasattr(general, 'level') and next_level > general.level:
-                general.level = next_level
-        except Exception:
-            pass
+        from battle.abilities import level_from_xp
+        next_level = level_from_xp(general.xp)
+        if hasattr(general, 'level') and next_level > general.level:
+            general.level = next_level
 
     def distribute_battle_xp(self, battle_stats, campaign, player_character=None):
         """Full post-battle XP distribution to general, player character, and companions.

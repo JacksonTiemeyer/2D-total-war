@@ -42,22 +42,16 @@ class CombatEngine:
 
         # AI engine hook (Patch C) — delegate AI decisions if wired
         if self.ai_engine is not None:
-            try:
-                self.ai_engine.update(all_squads, self.player_generals,
-                                      self.enemy_generals, terrain=self.terrain,
-                                      weather=self.weather)
-            except Exception:
-                pass
+            self.ai_engine.update(all_squads, self.player_generals,
+                                  self.enemy_generals, terrain=self.terrain,
+                                  weather=self.weather)
 
         # Siege engine hook (Patch D) — delegate siege tick if wired
         if self.siege_engine is not None:
-            try:
-                if hasattr(self.siege_engine, 'step'):
-                    self.siege_engine.step()
-                elif hasattr(self.siege_engine, 'tick'):
-                    self.siege_engine.tick()
-            except Exception:
-                pass
+            if hasattr(self.siege_engine, 'step'):
+                self.siege_engine.step()
+            elif hasattr(self.siege_engine, 'tick'):
+                self.siege_engine.tick()
 
         return None
 

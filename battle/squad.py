@@ -172,8 +172,9 @@ class Squad:
             count = stats.squad_size
         offsets = self._compute_formation_offsets(count, self.formation)
         for ox, oy in offsets:
-            sx = self.x + ox
-            sy = self.y + oy
+            rox, roy = self._rotate_offset(ox, oy)
+            sx = self.x + rox
+            sy = self.y + roy
             soldier = Soldier(sx, sy, stats, self.team)
             soldier.formation_x = ox
             soldier.formation_y = oy
@@ -232,6 +233,15 @@ class Squad:
             s.formation_x = ox
             s.formation_y = oy
 
+    def _rotate_offset(self, ox, oy):
+        """Convert local formation offsets into world-space offsets."""
+        cos_a = math.cos(self.facing_angle)
+        sin_a = math.sin(self.facing_angle)
+        return (
+            ox * cos_a - oy * sin_a,
+            ox * sin_a + oy * cos_a,
+        )
+
     def _check_cohesion(self):
         """Auto-reform if any soldier strays beyond COHESION_LIMIT from center."""
         if self.state in (SquadState.ROUTED, SquadState.BROKEN):
@@ -244,8 +254,9 @@ class Squad:
         if max_dist > COHESION_LIMIT:
             self._reposition_formation()
             for s in alive:
-                s.x = cx + s.formation_x
-                s.y = cy + s.formation_y
+                rox, roy = self._rotate_offset(s.formation_x, s.formation_y)
+                s.x = cx + rox
+                s.y = cy + roy
 
     @property
     def alive_soldiers(self):
@@ -570,8 +581,9 @@ class Squad:
         nx, ny = normalize(dx, dy)
         speed = self.effective_speed * speed_mult
         for s in self.alive_soldiers:
-            goal_x = self.target_x + s.formation_x
-            goal_y = self.target_y + s.formation_y
+            rox, roy = self._rotate_offset(s.formation_x, s.formation_y)
+            goal_x = self.target_x + rox
+            goal_y = self.target_y + roy
             sdx = goal_x - s.x
             sdy = goal_y - s.y
             snx, sny = normalize(sdx, sdy)
