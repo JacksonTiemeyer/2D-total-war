@@ -171,6 +171,70 @@ def test_single_update_per_tick():
     assert gen.update_count == 1, f"General should update once, got {gen.update_count}"
 
 
+class MockAISquad:
+    """Squad mock with role attributes for AI testing."""
+    def __init__(self, team=1, is_ranged=False, is_cavalry=False, is_spear=False,
+                 state="idle", morale=80, destroyed=False):
+        self.team = team
+        self.is_ranged = is_ranged
+        self.is_cavalry = is_cavalry
+        self.is_spear = is_spear
+        self.is_braced = False
+        self.is_destroyed = destroyed
+        self.state = state
+        self.morale = morale
+        self.x = 100
+        self.y = 100
+        self.center = (100, 100)
+        self.alive_count = 10
+        self.exhaustion = 0
+        self.attack_target = None
+        self.move_target = None
+        self.update_count = 0
+        self.terrain_mods = None
+
+        # Minimal unit_stats mock
+        class _Stats:
+            range_distance = 200
+            armor = 20
+        self.unit_stats = _Stats()
+
+    def give_attack_order(self, target):
+        self.attack_target = target
+
+    def give_move_order(self, x, y):
+        self.move_target = (x, y)
+
+    def update(self, all_squads):
+        self.update_count += 1
+
+
+def test_ai_role_classification():
+    """Verify AIEngine classifies melee/cavalry/ranged and issues orders."""
+    from battle.squad import SquadState as _SS
+
+    # Enemy melee squad (idle) should attack player squad
+    enemy_melee = MockAISquad(team=1, state=_SS.IDLE)
+    enemy_melee.x, enemy_melee.y = 500, 500
+
+    # Player squad as target
+    player_sq = MockAISquad(team=0, state=_SS.IDLE)
+    player_sq.x, player_sq.y = 200, 200
+
+    ai = AIEngine(army=[enemy_melee], personality=None)
+    ai.update([player_sq, enemy_melee], [], [], terrain=None, weather=None)
+
+    assert enemy_melee.attack_target is player_sq, \
+        "Melee squad should have been given attack order on player squad"
+
+
+def test_ai_no_crash_empty():
+    """Verify AIEngine handles empty squads gracefully."""
+    ai = AIEngine(army=[], personality=None)
+    # Should not raise
+    ai.update([], [], [])
+
+
 ALL_TESTS = [
     test_step_updates_squads,
     test_step_skips_destroyed,
@@ -182,6 +246,8 @@ ALL_TESTS = [
     test_full_composition,
     test_terrain_mods_before_update,
     test_single_update_per_tick,
+    test_ai_role_classification,
+    test_ai_no_crash_empty,
 ]
 
 
