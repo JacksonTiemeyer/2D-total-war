@@ -24,6 +24,8 @@ VeterancyEngine.award_xp(self, general, amount) -> None
 - Simple additive XP — future patches will add formula-based calculation
 
 ## Interaction Surface
+- **Wired into**: `CombatEngine.__init__(veterancy_engine=None)` — optional composition
+- **Called via**: `CombatEngine.award_battle_xp(general, amount)` — post-battle convenience method
 - **Will replace**: `main.py._award_post_battle_xp()` (lines 411-459)
 - **References**: `campaign/army.py` CampaignSquad veterancy ranks
 

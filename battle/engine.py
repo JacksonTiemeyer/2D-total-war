@@ -10,7 +10,8 @@ class CombatEngine:
     """Core combat engine that steps squads and generals each tick."""
 
     def __init__(self, player_squads, enemy_squads, player_generals, enemy_generals,
-                 terrain=None, weather=None, siege_engine=None):
+                 terrain=None, weather=None, siege_engine=None,
+                 veterancy_engine=None):
         self.player_squads = player_squads
         self.enemy_squads = enemy_squads
         self.player_generals = player_generals
@@ -18,6 +19,7 @@ class CombatEngine:
         self.terrain = terrain
         self.weather = weather
         self.siege_engine = siege_engine
+        self.veterancy_engine = veterancy_engine
 
     def step(self):
         """Execute one tick of combat updates.
@@ -44,3 +46,11 @@ class CombatEngine:
             self.siege_engine.step()
 
         return None
+
+    def award_battle_xp(self, general, amount):
+        """Delegate XP award to veterancy engine if wired (Patch E).
+
+        Called post-battle, not per-tick.
+        """
+        if self.veterancy_engine is not None:
+            self.veterancy_engine.award_xp(general, amount)
