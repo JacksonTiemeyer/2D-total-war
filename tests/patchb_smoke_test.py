@@ -327,6 +327,55 @@ def test_siege_engine_wall_collision():
     assert s.x < 100 or s.x > 130, f"Soldier should be pushed out of wall, got x={s.x}"
 
 
+def test_veterancy_calculate_xp_win():
+    """Verify VeterancyEngine.calculate_xp() with a victory scenario."""
+    ve = VeterancyEngine()
+    stats = {
+        "result": "player_win",  # matches BattleResult.PLAYER_WIN
+        "enemy_squads": [{"initial": 30, "alive": 5}],
+        "player_squads": [{"initial": 30, "alive": 25}],
+    }
+    xp = ve.calculate_xp(stats)
+    # base=5, strength_ratio=1.0, win_mult=1.0, casualty_ratio=5/30≈0.17
+    # xp = 5 * 2.0 * 1.0 * (1 - 0.17*0.5) = 5*2*0.917 ≈ 9
+    assert xp >= 1, f"XP should be at least 1, got {xp}"
+    assert xp == 9, f"Expected 9, got {xp}"
+
+
+def test_veterancy_calculate_xp_loss():
+    """Verify VeterancyEngine.calculate_xp() with a loss scenario."""
+    ve = VeterancyEngine()
+    stats = {
+        "result": "player_loss",
+        "enemy_squads": [{"initial": 30, "alive": 20}],
+        "player_squads": [{"initial": 30, "alive": 5}],
+    }
+    xp = ve.calculate_xp(stats)
+    # win_mult=0.4, high casualty ratio → lower XP
+    assert xp >= 1, f"XP should be at least 1, got {xp}"
+    assert xp < 5, f"Loss XP should be low, got {xp}"
+
+
+def test_veterancy_award_xp_with_levelup():
+    """Verify award_xp() increments XP and handles level-up."""
+    ve = VeterancyEngine()
+
+    class MockGen:
+        xp = 0
+        level = 1
+
+    g = MockGen()
+    ve.award_xp(g, 10)
+    assert g.xp == 10, f"Expected 10 XP, got {g.xp}"
+
+
+def test_veterancy_calculate_xp_empty():
+    """Verify calculate_xp() returns 0 for None/empty stats."""
+    ve = VeterancyEngine()
+    assert ve.calculate_xp(None) == 0
+    assert ve.calculate_xp({}) == 0  # empty dict is falsy
+
+
 ALL_TESTS = [
     test_step_updates_squads,
     test_step_skips_destroyed,
@@ -343,6 +392,10 @@ ALL_TESTS = [
     test_siege_engine_tower_firing,
     test_siege_engine_gate_damage,
     test_siege_engine_wall_collision,
+    test_veterancy_calculate_xp_win,
+    test_veterancy_calculate_xp_loss,
+    test_veterancy_award_xp_with_levelup,
+    test_veterancy_calculate_xp_empty,
 ]
 
 

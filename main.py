@@ -429,53 +429,18 @@ class Game:
             self.campaign._add_notification(f"Quest Failed: {q.title}")
 
     def _award_post_battle_xp(self):
-        """Award XP to generals after battle completion (not during battle)."""
+        """Award XP to generals after battle completion (not during battle).
+
+        Delegates to VeterancyEngine.distribute_battle_xp().
+        """
         if not self.battle or not self.battle_stats:
             return
-        s = self.battle_stats
-        is_win = s["result"] == BattleResult.PLAYER_WIN
-        win_mult = 1.0 if is_win else 0.4
-
-        # Calculate enemy strength for XP scaling
-        enemy_initial = sum(sq["initial"] for sq in s["enemy_squads"])
-        player_initial = sum(sq["initial"] for sq in s["player_squads"])
-        strength_ratio = enemy_initial / max(1, player_initial)
-
-        # Casualty ratio (lower = better performance)
-        player_survived = sum(sq["alive"] for sq in s["player_squads"])
-        casualty_ratio = 1.0 - (player_survived / max(1, player_initial))
-
-        base_xp = 5
-        xp = int(base_xp * (1.0 + strength_ratio) * win_mult * (1.0 - casualty_ratio * 0.5))
-        xp = max(1, xp)  # always at least 1 XP
-
-        # Apply to campaign general
-        pa = self.campaign.player_army
-        pa.general_xp += xp
-        # Check level up
-        from battle.abilities import level_from_xp
-        new_level = level_from_xp(pa.general_xp)
-        if new_level > pa.general_level:
-            pa.general_level = new_level
-
-        # Award XP to player character as well
-        if self.player_character:
-            levels_gained = self.player_character.add_xp(xp)
-            if levels_gained > 0:
-                self.campaign._add_notification(
-                    f"Level up! You are now level {self.player_character.level} ({self.player_character.tier_name})")
-
-        # Award XP to companions
-        if hasattr(self.campaign, 'companion_manager'):
-            companion_xp = max(1, xp // 2)  # companions get half XP
-            for comp in self.campaign.companion_manager.companions:
-                if comp.alive:
-                    levels = comp.add_xp(companion_xp)
-                    if levels > 0:
-                        self.campaign._add_notification(
-                            f"Companion {comp.name} is now level {comp.level}!")
-                    # Battle participation increases loyalty
-                    comp.modify_loyalty(2 if is_win else -1)
+        from battle.veterancy_engine import VeterancyEngine
+        ve = VeterancyEngine()
+        notifications = ve.distribute_battle_xp(
+            self.battle_stats, self.campaign, self.player_character)
+        for msg in notifications:
+            self.campaign._add_notification(msg)
 
     def _draw(self):
         if self.state == GameState.MAIN_MENU:
