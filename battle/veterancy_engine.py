@@ -12,11 +12,15 @@ class VeterancyEngine:
         pass
 
     def award_xp(self, general, amount):
-        """Award XP to a general.
-
-        Args:
-            general: General instance with an xp attribute.
-            amount: XP amount to award.
-        """
-        if hasattr(general, 'xp'):
-            general.xp += amount
+        """Award XP to a general and handle level ups if XP thresholds are crossed."""
+        if not hasattr(general, 'xp'):
+            return
+        general.xp += amount
+        # Optional: auto level up if helper exists
+        try:
+            from battle.general import xp_for_level, level_from_xp  # lazy import to avoid cycle in some setups
+            next_level = level_from_xp(general.xp)
+            if hasattr(general, 'level') and next_level > general.level:
+                general.level = next_level
+        except Exception:
+            pass

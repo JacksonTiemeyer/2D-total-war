@@ -11,7 +11,7 @@ class CombatEngine:
 
     def __init__(self, player_squads, enemy_squads, player_generals, enemy_generals,
                  terrain=None, weather=None, siege_engine=None,
-                 veterancy_engine=None):
+                 veterancy_engine=None, ai_engine=None):
         self.player_squads = player_squads
         self.enemy_squads = enemy_squads
         self.player_generals = player_generals
@@ -20,6 +20,7 @@ class CombatEngine:
         self.weather = weather
         self.siege_engine = siege_engine
         self.veterancy_engine = veterancy_engine
+        self.ai_engine = ai_engine
 
     def step(self):
         """Execute one tick of combat updates.
@@ -40,10 +41,35 @@ class CombatEngine:
             g.update(self.enemy_squads, self.player_squads)
 
         # Hook: future AI-driven decisions and spell resolution go here
+        if self.ai_engine is not None:
+            try:
+                self.ai_engine.update(all_squads=self.player_squads + self.enemy_squads,
+                                      player_generals=self.player_generals,
+                                      enemy_generals=self.enemy_generals,
+                                      terrain=self.terrain,
+                                      weather=self.weather)
+            except Exception:
+                pass
 
         # Siege engine hook (Patch D) — delegate siege tick if wired
         if self.siege_engine is not None:
-            self.siege_engine.step()
+            try:
+                # Provide a generic interface; the SiegeEngine may implement step() or tick()
+                if hasattr(self.siege_engine, 'step'):
+                    self.siege_engine.step()
+                elif hasattr(self.siege_engine, 'tick'):
+                    self.siege_engine.tick()
+            except Exception:
+                pass
+
+        # Veterancy engine hook (Patch E) - reserved for future XP distribution
+        if self.veterancy_engine is not None:
+            try:
+                # Placeholder: actual XP distribution happens in Patch E
+                if hasattr(self.veterancy_engine, 'award_xp'):
+                    pass
+            except Exception:
+                pass
 
         return None
 

@@ -126,6 +126,9 @@ class BattleScene:
                 enemy_generals=self.enemy_generals,
                 terrain=self.terrain,
                 weather=self.weather,
+                ai_engine=None,
+                siege_engine=None,
+                veterancy_engine=None,
             )
         except Exception:
             self._combat_engine = None

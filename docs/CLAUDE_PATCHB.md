@@ -13,7 +13,8 @@ Centralized per-tick combat orchestration engine that mirrors BattleScene._tick(
 ## Public API Surface
 ```python
 CombatEngine.__init__(self, player_squads, enemy_squads, player_generals, enemy_generals,
-                      terrain=None, weather=None)
+                      terrain=None, weather=None,
+                      ai_engine=None, siege_engine=None, veterancy_engine=None)
 CombatEngine.step(self) -> None
 ```
 
