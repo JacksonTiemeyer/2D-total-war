@@ -1002,13 +1002,6 @@ class BattleScene:
         self.battle_timer += 1
 
     def _tick(self):
-        # Patch A: delegate a frame to the new CombatEngine scaffold if present
-        try:
-            if hasattr(self, "_combat_engine") and self._combat_engine is not None:
-                self._combat_engine.step()
-        except Exception:
-            # If the engine isn't fully wired yet, continue with the existing tick
-            pass
         # Compute fog of war visibility
         self._compute_visibility()
 
@@ -1046,9 +1039,12 @@ class BattleScene:
 
         self._enemy_ai()
 
-        # Patch B: guarded combat engine step (no-op until engine is wired)
-        if self._combat_engine is not None:
-            self._combat_engine.step()
+        # Patch B: guarded combat engine step
+        try:
+            if self._combat_engine is not None:
+                self._combat_engine.step()
+        except Exception:
+            pass
 
         # Sound triggers: charge impact and rout
         audio = get_audio()

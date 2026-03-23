@@ -9,11 +9,14 @@ work independently; the engine is an opt-in bridge for future migration.
 class CombatEngine:
     """Core combat engine that steps squads and generals each tick."""
 
-    def __init__(self, player_squads, enemy_squads, player_generals, enemy_generals):
+    def __init__(self, player_squads, enemy_squads, player_generals, enemy_generals,
+                 terrain=None, weather=None):
         self.player_squads = player_squads
         self.enemy_squads = enemy_squads
         self.player_generals = player_generals
         self.enemy_generals = enemy_generals
+        self.terrain = terrain
+        self.weather = weather
 
     def step(self):
         """Execute one tick of combat updates.

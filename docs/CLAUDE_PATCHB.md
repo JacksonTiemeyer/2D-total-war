@@ -12,8 +12,21 @@ Centralized per-tick combat orchestration engine that mirrors BattleScene._tick(
 
 ## Public API Surface
 ```python
-CombatEngine.__init__(self, player_squads, enemy_squads, player_generals, enemy_generals)
+CombatEngine.__init__(self, player_squads, enemy_squads, player_generals, enemy_generals,
+                      terrain=None, weather=None)
 CombatEngine.step(self) -> None
+```
+
+## How to Verify
+```bash
+# Engine initializes without error (terrain/weather now accepted)
+python -c "from battle.engine import CombatEngine; e = CombatEngine([],[],[],[],terrain=[],weather='clear'); print('init OK')"
+
+# Smoke tests (no pygame required)
+python tests/patchb_smoke_run.py
+
+# Full game import still clean
+python -c "import main; print('import OK')"
 ```
 
 ## Core Data Structures
