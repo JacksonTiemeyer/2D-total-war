@@ -711,10 +711,10 @@ class Squad:
             if target_zone is not None and target_zone.active:
                 # Determine which side we're on (opposite to target)
                 side = 'a' if self.target_squad in target_zone.squads_b else 'b'
-                target_zone.add_reinforcement(self, side)
-                self.state = SquadState.FIGHTING
-                self.charge_timer = CHARGE_WINDOW_FRAMES
-                return
+                if target_zone.add_reinforcement(self, side):
+                    self.state = SquadState.FIGHTING
+                    self.charge_timer = CHARGE_WINDOW_FRAMES
+                    return
 
             self.state = SquadState.FIGHTING
             # Reduced charging damage window so melee clashes don't

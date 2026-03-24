@@ -239,14 +239,14 @@ class BattleScene:
                                 zone = sq1.battleground
                                 if zone.active:
                                     side = 'b' if sq1 in zone.squads_a else 'a'
-                                    zone.add_reinforcement(sq2, side)
-                                    self._add_generals_to_zone(zone, sq2, side)
+                                    if zone.add_reinforcement(sq2, side):
+                                        self._add_generals_to_zone(zone, sq2, side)
                             elif getattr(sq2, 'battleground', None) is not None and getattr(sq1, 'battleground', None) is None:
                                 zone = sq2.battleground
                                 if zone.active:
                                     side = 'b' if sq2 in zone.squads_a else 'a'
-                                    zone.add_reinforcement(sq1, side)
-                                    self._add_generals_to_zone(zone, sq1, side)
+                                    if zone.add_reinforcement(sq1, side):
+                                        self._add_generals_to_zone(zone, sq1, side)
 
                         if dist_sq >= push_radius * push_radius or dist_sq < 0.01:
                             continue

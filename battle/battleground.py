@@ -17,11 +17,30 @@ from core.settings import (
     COMBAT_ASSIST_RECOVERY_PENALTY, COMBAT_REINFORCEMENT_MORALE_SHOCK,
     FLANK_DAMAGE_BONUS,
     RETREAT_MORALE_PENALTY, GENERAL_ZONE_SPLASH_RADIUS,
+    COMBAT_MICRO_MOVE_SPEED, COMBAT_MICRO_MOVE_THRESHOLD,
+    COMBAT_ADVANCE_SPEED, COMBAT_SPARK_TIMER, COMBAT_HIT_FLASH_TIMER,
+    COMBAT_DEATH_TIMER, COMBAT_SPLASH_DAMAGE_MULT,
+    COMBAT_MAX_SQUADS_PER_SIDE, COMBAT_ASSIST_MAX_DISTANCE,
+    GENERAL_ATTACK_COOLDOWN,
 )
 
 
 class CombatZone:
     """Manages a melee engagement zone between one or more squads per side."""
+
+    # Shared dust surface cache across all zones: (radius, alpha) -> Surface
+    _dust_cache = {}
+
+    @classmethod
+    def _get_dust_surface(cls, dr, alpha):
+        """Return a cached dust circle surface for the given radius and alpha."""
+        key = (dr, alpha)
+        surf = cls._dust_cache.get(key)
+        if surf is None:
+            surf = pygame.Surface((dr * 2, dr * 2), pygame.SRCALPHA)
+            pygame.draw.circle(surf, (180, 155, 110, alpha), (dr, dr), dr)
+            cls._dust_cache[key] = surf
+        return surf
 
     def __init__(self, squad_a, squad_b):
         self.squads_a = [squad_a]
@@ -53,6 +72,12 @@ class CombatZone:
         # Generals participating in this zone
         self.generals_a = []
         self.generals_b = []
+
+        # Per-tick caches (cleared in reset_tick_guard)
+        self._cached_alive_a = None
+        self._cached_alive_b = None
+        self._soldier_to_squad = {}
+        self._rebuild_soldier_map()
 
         # Position squads facing each other, then compute initial pairings
         self._position_squads()
@@ -98,24 +123,34 @@ class CombatZone:
     # Pairing
     # ------------------------------------------------------------------
 
+    def _rebuild_soldier_map(self):
+        """Rebuild the soldier-to-squad lookup dict."""
+        self._soldier_to_squad = {}
+        for sq in self.squads_a + self.squads_b:
+            for s in sq.soldiers:
+                self._soldier_to_squad[id(s)] = sq
+
     def _all_alive_a(self):
+        if self._cached_alive_a is not None:
+            return self._cached_alive_a
         soldiers = []
         for sq in self.squads_a:
             soldiers.extend(sq.alive_soldiers)
+        self._cached_alive_a = soldiers
         return soldiers
 
     def _all_alive_b(self):
+        if self._cached_alive_b is not None:
+            return self._cached_alive_b
         soldiers = []
         for sq in self.squads_b:
             soldiers.extend(sq.alive_soldiers)
+        self._cached_alive_b = soldiers
         return soldiers
 
     def _squad_for_soldier(self, soldier):
-        """Find the squad that owns a soldier."""
-        for sq in self.squads_a + self.squads_b:
-            if soldier in sq.soldiers:
-                return sq
-        return None
+        """Find the squad that owns a soldier (O(1) lookup)."""
+        return self._soldier_to_squad.get(id(soldier))
 
     def _side_for_soldier(self, soldier):
         """Return 'a' or 'b' based on which side owns the soldier."""
@@ -200,10 +235,11 @@ class CombatZone:
                         s.combat_timer = 0
                     s.paired_opponent = None
         self.pairs = new_pairs
-        # Clean up assists with dead participants
+        # Clean up assists with dead participants or excessive distance
+        max_assist_dist = MELEE_RANGE * COMBAT_ASSIST_MAX_DISTANCE
         new_assists = []
         for h, ally, enemy in self.assists:
-            if h.alive and enemy.alive:
+            if h.alive and enemy.alive and distance(h.x, h.y, enemy.x, enemy.y) < max_assist_dist:
                 new_assists.append((h, ally, enemy))
             else:
                 if h.alive and h.combat_state not in ("VICTORY_PAUSE", "IDLE"):
@@ -219,11 +255,19 @@ class CombatZone:
         for helper, ally, enemy in list(self.assists):
             self._tick_assist(helper, enemy)
 
+        # Build paired_ids once for reassignment and advance
+        paired_ids = set()
+        for a, b in self.pairs:
+            paired_ids.add(id(a))
+            paired_ids.add(id(b))
+        for h, ally, enemy in self.assists:
+            paired_ids.add(id(h))
+
         # Reassign unpaired soldiers
-        self._reassign_unpaired()
+        self._reassign_unpaired(paired_ids)
 
         # Move unpaired soldiers toward the enemy line
-        self._advance_unpaired()
+        self._advance_unpaired(paired_ids)
 
         # Tick general combat (splash damage)
         self._tick_generals()
@@ -238,6 +282,8 @@ class CombatZone:
     def reset_tick_guard(self):
         """Called at start of each tick to allow the next update."""
         self._updated_this_tick = False
+        self._cached_alive_a = None
+        self._cached_alive_b = None
 
     def _avg_center(self, soldiers):
         if not soldiers:
@@ -258,8 +304,8 @@ class CombatZone:
 
         # Micro-move: close distance if too far for melee
         d = distance(sa.x, sa.y, sb.x, sb.y)
-        if d > MELEE_RANGE * 0.8:
-            speed = 0.5
+        if d > MELEE_RANGE * COMBAT_MICRO_MOVE_THRESHOLD:
+            speed = COMBAT_MICRO_MOVE_SPEED
             dx, dy = sb.x - sa.x, sb.y - sa.y
             norm = max(0.01, math.hypot(dx, dy))
             move = min(speed, d * 0.5 - MELEE_RANGE * 0.3)
@@ -323,40 +369,48 @@ class CombatZone:
 
         self._tick_combat_state(helper, enemy)
 
+    def _handle_kill(self, victim, killer_squad=None, killer_general=None):
+        """Handle soldier death: set death state, notify squad, track kills."""
+        victim.health = 0
+        victim.alive = False
+        victim.death_timer = COMBAT_DEATH_TIMER
+        victim.death_alpha = 1.0
+        victim_squad = self._squad_for_soldier(victim)
+        if victim_squad:
+            victim_squad._dying_soldiers.append(victim)
+            victim_squad.on_casualty()
+        if killer_squad:
+            killer_squad.kills += 1
+        if killer_general:
+            killer_general.kills += 1
+
     def _resolve_hit(self, attacker, defender, flank_mult=1.0):
         """Resolve a melee hit using existing soldier.attack() math."""
-        dmg = attacker.attack(defender, is_charging=False, flank_mult=flank_mult)
+        # Apply terrain defense modifier from the defender's squad
+        defender_squad = self._squad_for_soldier(defender)
+        defense_terrain_mult = 1.0
+        if defender_squad:
+            defense_terrain_mult = defender_squad.terrain_mods.get("melee_defense_mult", 1.0)
+        dmg = attacker.attack(defender, is_charging=False, flank_mult=flank_mult,
+                              defense_terrain_mult=defense_terrain_mult)
         if dmg > 0:
             # Spawn spark at hit position
             self.spark_events.append({
                 "x": (attacker.x + defender.x) * 0.5,
                 "y": (attacker.y + defender.y) * 0.5,
-                "timer": 8,
+                "timer": COMBAT_SPARK_TIMER,
                 "angles": [random.uniform(0, math.pi * 2) for _ in range(3)],
             })
         if dmg > 0 and not defender.alive:
-            # Record the kill on the attacker's squad
             attacker_squad = self._squad_for_soldier(attacker)
-            defender_squad = self._squad_for_soldier(defender)
-            if attacker_squad:
-                attacker_squad.kills += 1
-            if defender_squad:
-                defender_squad._dying_soldiers.append(defender)
-                defender_squad.on_casualty()
+            self._handle_kill(defender, killer_squad=attacker_squad)
 
     # ------------------------------------------------------------------
     # Reassignment: winners help neighbors
     # ------------------------------------------------------------------
 
-    def _reassign_unpaired(self):
+    def _reassign_unpaired(self, paired_ids):
         """Match unpaired soldiers to new opponents or ally-assist slots."""
-        paired_ids = set()
-        for a, b in self.pairs:
-            paired_ids.add(id(a))
-            paired_ids.add(id(b))
-        for h, ally, enemy in self.assists:
-            paired_ids.add(id(h))
-
         free_a = [s for s in self._all_alive_a()
                   if id(s) not in paired_ids and s.combat_state not in ("VICTORY_PAUSE", "SWINGING")]
         free_b = [s for s in self._all_alive_b()
@@ -392,33 +446,26 @@ class CombatZone:
                 if d < best_dist:
                     best_dist = d
                     best_pair = (a, b)
-            if best_pair and best_dist < MELEE_RANGE * 6:
+            if best_pair and best_dist < MELEE_RANGE * COMBAT_ASSIST_MAX_DISTANCE:
                 enemy = best_pair[1] if surplus_is_a else best_pair[0]
                 ally = best_pair[0] if surplus_is_a else best_pair[1]
                 self.assists.append((s, ally, enemy))
                 s.combat_state = "READY"
                 s.combat_timer = COMBAT_READY_FRAMES + random.randint(-2, 2)
 
-    def _advance_unpaired(self):
+    def _advance_unpaired(self, paired_ids):
         """Move unpaired IDLE soldiers toward the enemy line."""
-        paired_ids = set()
-        for a, b in self.pairs:
-            paired_ids.add(id(a))
-            paired_ids.add(id(b))
-        for h, ally, enemy in self.assists:
-            paired_ids.add(id(h))
-
         cos_h = math.cos(self.heading)
         sin_h = math.sin(self.heading)
 
         for s in self._all_alive_a():
             if id(s) not in paired_ids and s.combat_state == "IDLE":
-                s.x += cos_h * 0.3
-                s.y += sin_h * 0.3
+                s.x += cos_h * COMBAT_ADVANCE_SPEED
+                s.y += sin_h * COMBAT_ADVANCE_SPEED
         for s in self._all_alive_b():
             if id(s) not in paired_ids and s.combat_state == "IDLE":
-                s.x -= cos_h * 0.3
-                s.y -= sin_h * 0.3
+                s.x -= cos_h * COMBAT_ADVANCE_SPEED
+                s.y -= sin_h * COMBAT_ADVANCE_SPEED
 
     # ------------------------------------------------------------------
     # Reinforcements
@@ -430,7 +477,15 @@ class CombatZone:
         Args:
             squad: The Squad joining the fight.
             side: 'a' or 'b' — which side they join.
+
+        Returns:
+            True if the squad was added, False if the zone is full on that side.
         """
+        # Enforce max squads per side
+        side_list = self.squads_a if side == 'a' else self.squads_b
+        if len(side_list) >= COMBAT_MAX_SQUADS_PER_SIDE:
+            return False
+
         squad.battleground = self
         squad._pre_zone_x, squad._pre_zone_y = squad.x, squad.y
         if side == 'a':
@@ -446,12 +501,19 @@ class CombatZone:
         perp_x = -sin_h
         perp_y = cos_h
 
-        # Find lateral extent of existing soldiers on this side
+        # Find lateral extent of existing soldiers and place on less crowded flank
         existing = self._all_alive_a() if side == 'a' else self._all_alive_b()
         if existing:
             laterals = [s.x * perp_x + s.y * perp_y for s in existing]
+            min_lateral = min(laterals)
             max_lateral = max(laterals)
-            flank_offset = max_lateral + SOLDIER_SPACING * 3
+            center_lateral = (min_lateral + max_lateral) * 0.5
+            # Place on the flank farther from zone center lateral
+            squad_lateral = squad.x * perp_x + squad.y * perp_y
+            if squad_lateral < center_lateral:
+                flank_offset = min_lateral - SOLDIER_SPACING * 3
+            else:
+                flank_offset = max_lateral + SOLDIER_SPACING * 3
         else:
             flank_offset = 0
 
@@ -462,9 +524,15 @@ class CombatZone:
 
         self._place_squad(squad, anchor_x, anchor_y, facing)
 
+        # Rebuild soldier lookup and invalidate alive caches
+        self._rebuild_soldier_map()
+        self._cached_alive_a = None
+        self._cached_alive_b = None
+
         # Morale shock to the opposing side
         for sq in (self.squads_b if side == 'a' else self.squads_a):
             sq.apply_morale_modifier(COMBAT_REINFORCEMENT_MORALE_SHOCK)
+        return True
 
     # ------------------------------------------------------------------
     # Squad extraction (retreat)
@@ -566,12 +634,12 @@ class CombatZone:
                 effective_armor = target.stats.armor * random.uniform(0.5, 1.0)
                 damage = max(1, attack_power * random.uniform(0.8, 1.2) - effective_armor * 0.3)
                 target.health -= damage
-                target.hit_flash_timer = 6
+                target.hit_flash_timer = COMBAT_HIT_FLASH_TIMER
 
                 # Spawn spark
                 self.spark_events.append({
                     "x": target.x, "y": target.y,
-                    "timer": 8,
+                    "timer": COMBAT_SPARK_TIMER,
                     "angles": [random.uniform(0, math.pi * 2) for _ in range(3)],
                 })
 
@@ -582,23 +650,15 @@ class CombatZone:
                     "type": "slash",
                     "x": target.x, "y": target.y,
                     "angle": math.atan2(target.y - g.y, target.x - g.x),
-                    "timer": 8,
+                    "timer": COMBAT_SPARK_TIMER,
                 })
 
                 if target.health <= 0:
-                    target.health = 0
-                    target.alive = False
-                    target.death_timer = 15
-                    target.death_alpha = 1.0
-                    target_squad = self._squad_for_soldier(target)
-                    if target_squad:
-                        target_squad._dying_soldiers.append(target)
-                        target_squad.on_casualty()
-                    g.kills += 1
+                    self._handle_kill(target, killer_general=g)
 
                 # Splash: hit 1-2 nearby enemies
                 splash_count = 0
-                splash_dmg = damage * 0.4
+                splash_dmg = damage * COMBAT_SPLASH_DAMAGE_MULT
                 for es in enemies:
                     if es is target or not es.alive:
                         continue
@@ -606,22 +666,14 @@ class CombatZone:
                         es_armor = es.stats.armor * random.uniform(0.5, 1.0)
                         s_dmg = max(1, splash_dmg - es_armor * 0.3)
                         es.health -= s_dmg
-                        es.hit_flash_timer = 6
+                        es.hit_flash_timer = COMBAT_HIT_FLASH_TIMER
                         if es.health <= 0:
-                            es.health = 0
-                            es.alive = False
-                            es.death_timer = 15
-                            es.death_alpha = 1.0
-                            es_squad = self._squad_for_soldier(es)
-                            if es_squad:
-                                es_squad._dying_soldiers.append(es)
-                                es_squad.on_casualty()
-                            g.kills += 1
+                            self._handle_kill(es, killer_general=g)
                         splash_count += 1
                         if splash_count >= 2:
                             break
 
-                g.attack_cooldown = 30
+                g.attack_cooldown = GENERAL_ATTACK_COOLDOWN
 
     # ------------------------------------------------------------------
     # Drawing
@@ -643,8 +695,7 @@ class CombatZone:
             dr = int(camera.scale(5 + 8 * phase))
             alpha = int(40 * (1.0 - phase))
             if dr > 0 and alpha > 0:
-                dust_surf = pygame.Surface((dr * 2, dr * 2), pygame.SRCALPHA)
-                pygame.draw.circle(dust_surf, (180, 155, 110, alpha), (dr, dr), dr)
+                dust_surf = self._get_dust_surface(dr, alpha)
                 surface.blit(dust_surf, (sx - dr, sy - dr))
 
         # Clash sparks at individual hit positions
@@ -652,7 +703,7 @@ class CombatZone:
             if e["timer"] <= 0:
                 continue
             sx, sy = camera.world_to_screen(e["x"], e["y"])
-            progress = e["timer"] / 8.0
+            progress = e["timer"] / float(COMBAT_SPARK_TIMER)
             for angle in e["angles"]:
                 spark_len = camera.scale(8) * progress
                 ex = int(sx + math.cos(angle) * spark_len)
