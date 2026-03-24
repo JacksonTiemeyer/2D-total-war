@@ -1,101 +1,738 @@
-"""Battleground: localized micro-battle zone between two squads.
+"""CombatZone: dynamic melee engagement zone between opposing squads.
 
-This module implements a simplified, localized combat sandbox between two
-squads. Within the battleground, soldiers are locked to their squad's
-formation offsets but engage in micro-melee and pushing within a bounded zone.
+Replaces the old Battleground with a system that pairs individual soldiers
+in 1v1 duels, animates attack cycles, and implements assist/reinforcement
+mechanics for a living, reactive skirmish line.
 """
 
 import math
+import random
+import pygame
 from core.utils import distance
-from core.settings import MELEE_RANGE
+from core.settings import (
+    MELEE_RANGE, SOLDIER_SPACING,
+    COMBAT_READY_FRAMES, COMBAT_SWING_FRAMES, COMBAT_SWING_HIT_FRAME,
+    COMBAT_RECOVER_FRAMES, COMBAT_VICTORY_PAUSE_FRAMES,
+    COMBAT_ZONE_SEPARATION, COMBAT_ASSIST_FLANK_BONUS,
+    COMBAT_ASSIST_RECOVERY_PENALTY, COMBAT_REINFORCEMENT_MORALE_SHOCK,
+    FLANK_DAMAGE_BONUS,
+    RETREAT_MORALE_PENALTY, GENERAL_ZONE_SPLASH_RADIUS,
+)
 
 
-class Battleground:
+class CombatZone:
+    """Manages a melee engagement zone between one or more squads per side."""
+
     def __init__(self, squad_a, squad_b):
-        self.a = squad_a
-        self.b = squad_b
-        # Link back
-        self.a.battleground = self
-        self.b.battleground = self
+        self.squads_a = [squad_a]
+        self.squads_b = [squad_b]
         self.active = True
-        # Initial center between squads
-        self.center_x = (self.a.center[0] + self.b.center[0]) * 0.5
-        self.center_y = (self.a.center[1] + self.b.center[1]) * 0.5
-        self.heading = 0.0  # direction squads feel like they're pushing toward
+
+        # Link squads back to this zone and save pre-zone positions
+        squad_a.battleground = self
+        squad_b.battleground = self
+        squad_a._pre_zone_x, squad_a._pre_zone_y = squad_a.x, squad_a.y
+        squad_b._pre_zone_x, squad_b._pre_zone_y = squad_b.x, squad_b.y
+
+        # Compute heading (A toward B) and zone center
+        ax, ay = squad_a.center
+        bx, by = squad_b.center
+        dx, dy = bx - ax, by - ay
+        self.heading = math.atan2(dy, dx) if (dx != 0 or dy != 0) else 0.0
+        self.zone_center_x = (ax + bx) * 0.5
+        self.zone_center_y = (ay + by) * 0.5
+        self.separation = COMBAT_ZONE_SEPARATION
+
+        # Combat state
+        self.pairs = []           # list of (soldier_a, soldier_b) active duels
+        self.assists = []         # list of (helper, ally, enemy) 2v1 engagements
+        self.spark_events = []    # [{x, y, timer, angles}]
+        self._dust_frame = 0
+        self._updated_this_tick = False
+
+        # Generals participating in this zone
+        self.generals_a = []
+        self.generals_b = []
+
+        # Position squads facing each other, then compute initial pairings
+        self._position_squads()
+        self._compute_pairs()
+
+    # ------------------------------------------------------------------
+    # Positioning
+    # ------------------------------------------------------------------
+
+    def _position_squads(self):
+        """Place squads on opposite sides of the contact line, facing each other."""
+        cos_h = math.cos(self.heading)
+        sin_h = math.sin(self.heading)
+        half_sep = self.separation * 0.5
+
+        # Anchors: offset from zone center along heading axis
+        anchor_ax = self.zone_center_x - cos_h * half_sep
+        anchor_ay = self.zone_center_y - sin_h * half_sep
+        anchor_bx = self.zone_center_x + cos_h * half_sep
+        anchor_by = self.zone_center_y + sin_h * half_sep
+
+        facing_a = self.heading              # A faces toward B
+        facing_b = self.heading + math.pi    # B faces toward A
+
+        for sq in self.squads_a:
+            self._place_squad(sq, anchor_ax, anchor_ay, facing_a)
+        for sq in self.squads_b:
+            self._place_squad(sq, anchor_bx, anchor_by, facing_b)
+
+    def _place_squad(self, squad, anchor_x, anchor_y, facing):
+        """Position a squad's soldiers around an anchor point with given facing."""
+        cos_f = math.cos(facing)
+        sin_f = math.sin(facing)
+        squad.facing_angle = facing
+        for s in squad.alive_soldiers:
+            rox = s.formation_x * cos_f - s.formation_y * sin_f
+            roy = s.formation_x * sin_f + s.formation_y * cos_f
+            s.x = anchor_x + rox
+            s.y = anchor_y + roy
+            s.facing_angle = facing
+
+    # ------------------------------------------------------------------
+    # Pairing
+    # ------------------------------------------------------------------
+
+    def _all_alive_a(self):
+        soldiers = []
+        for sq in self.squads_a:
+            soldiers.extend(sq.alive_soldiers)
+        return soldiers
+
+    def _all_alive_b(self):
+        soldiers = []
+        for sq in self.squads_b:
+            soldiers.extend(sq.alive_soldiers)
+        return soldiers
+
+    def _squad_for_soldier(self, soldier):
+        """Find the squad that owns a soldier."""
+        for sq in self.squads_a + self.squads_b:
+            if soldier in sq.soldiers:
+                return sq
+        return None
+
+    def _side_for_soldier(self, soldier):
+        """Return 'a' or 'b' based on which side owns the soldier."""
+        for sq in self.squads_a:
+            if soldier in sq.soldiers:
+                return 'a'
+        return 'b'
+
+    def _lateral_key(self, soldier):
+        """Project soldier position onto axis perpendicular to heading."""
+        perp_x = -math.sin(self.heading)
+        perp_y = math.cos(self.heading)
+        return soldier.x * perp_x + soldier.y * perp_y
+
+    def _compute_pairs(self):
+        """Match soldiers 1:1 along the front line by lateral position."""
+        # Clear old pairing state
+        for s in self._all_alive_a() + self._all_alive_b():
+            s.paired_opponent = None
+            s.combat_state = "IDLE"
+            s.combat_timer = 0
+
+        alive_a = self._all_alive_a()
+        alive_b = self._all_alive_b()
+
+        sorted_a = sorted(alive_a, key=self._lateral_key)
+        sorted_b = sorted(alive_b, key=self._lateral_key)
+
+        n = min(len(sorted_a), len(sorted_b))
+        self.pairs = []
+        for i in range(n):
+            sa, sb = sorted_a[i], sorted_b[i]
+            sa.paired_opponent = sb
+            sb.paired_opponent = sa
+            sa.combat_state = "READY"
+            sa.combat_timer = COMBAT_READY_FRAMES + random.randint(-2, 2)
+            sb.combat_state = "READY"
+            sb.combat_timer = COMBAT_READY_FRAMES + random.randint(-2, 2)
+            self.pairs.append((sa, sb))
+
+        self.assists = []
+
+    # ------------------------------------------------------------------
+    # Per-frame update
+    # ------------------------------------------------------------------
 
     def update(self):
+        """Tick one frame of combat zone logic. Called once per frame from runtime."""
         if not self.active:
             return
-        if self.a.is_destroyed or self.b.is_destroyed:
+
+        # Guard against double-update (both squads call update via their own update())
+        if self._updated_this_tick:
+            return
+        self._updated_this_tick = True
+
+        # Check for termination
+        alive_a = self._all_alive_a()
+        alive_b = self._all_alive_b()
+        if not alive_a or not alive_b:
             self.terminate()
             return
 
-        # Determine battleground heading from current centers
-        ax, ay = self.a.center
-        bx, by = self.b.center
-        dx = bx - ax
-        dy = by - ay
-        if dx == 0 and dy == 0:
-            self.heading = 0.0
+        # Tick animation counter
+        self._dust_frame += 1
+
+        # Tick spark events
+        self.spark_events = [e for e in self.spark_events if e["timer"] > 0]
+        for e in self.spark_events:
+            e["timer"] -= 1
+
+        # Remove dead soldiers from pairs; reset surviving partner's state
+        new_pairs = []
+        for a, b in self.pairs:
+            if a.alive and b.alive:
+                new_pairs.append((a, b))
+            else:
+                # Reset surviving soldier so they can be re-paired
+                for s in (a, b):
+                    if s.alive and s.combat_state not in ("VICTORY_PAUSE", "IDLE"):
+                        s.combat_state = "IDLE"
+                        s.combat_timer = 0
+                    s.paired_opponent = None
+        self.pairs = new_pairs
+        # Clean up assists with dead participants
+        new_assists = []
+        for h, ally, enemy in self.assists:
+            if h.alive and enemy.alive:
+                new_assists.append((h, ally, enemy))
+            else:
+                if h.alive and h.combat_state not in ("VICTORY_PAUSE", "IDLE"):
+                    h.combat_state = "IDLE"
+                    h.combat_timer = 0
+        self.assists = new_assists
+
+        # Tick each active pair
+        for sa, sb in list(self.pairs):
+            self._tick_pair(sa, sb)
+
+        # Tick assists (2v1)
+        for helper, ally, enemy in list(self.assists):
+            self._tick_assist(helper, enemy)
+
+        # Reassign unpaired soldiers
+        self._reassign_unpaired()
+
+        # Move unpaired soldiers toward the enemy line
+        self._advance_unpaired()
+
+        # Tick general combat (splash damage)
+        self._tick_generals()
+
+        # Update zone center from current squad positions
+        all_a_center = self._avg_center(alive_a)
+        all_b_center = self._avg_center(alive_b)
+        if all_a_center and all_b_center:
+            self.zone_center_x = (all_a_center[0] + all_b_center[0]) * 0.5
+            self.zone_center_y = (all_a_center[1] + all_b_center[1]) * 0.5
+
+    def reset_tick_guard(self):
+        """Called at start of each tick to allow the next update."""
+        self._updated_this_tick = False
+
+    def _avg_center(self, soldiers):
+        if not soldiers:
+            return None
+        cx = sum(s.x for s in soldiers) / len(soldiers)
+        cy = sum(s.y for s in soldiers) / len(soldiers)
+        return (cx, cy)
+
+    # ------------------------------------------------------------------
+    # Combat tick
+    # ------------------------------------------------------------------
+
+    def _tick_pair(self, sa, sb):
+        """Tick one frame of a 1v1 duel between sa and sb."""
+        # Face each other
+        sa.facing_angle = math.atan2(sb.y - sa.y, sb.x - sa.x)
+        sb.facing_angle = math.atan2(sa.y - sb.y, sa.x - sb.x)
+
+        # Micro-move: close distance if too far for melee
+        d = distance(sa.x, sa.y, sb.x, sb.y)
+        if d > MELEE_RANGE * 0.8:
+            speed = 0.5
+            dx, dy = sb.x - sa.x, sb.y - sa.y
+            norm = max(0.01, math.hypot(dx, dy))
+            move = min(speed, d * 0.5 - MELEE_RANGE * 0.3)
+            if move > 0:
+                sa.x += (dx / norm) * move * 0.5
+                sa.y += (dy / norm) * move * 0.5
+                sb.x -= (dx / norm) * move * 0.5
+                sb.y -= (dy / norm) * move * 0.5
+
+        # Tick each soldier's combat state
+        for attacker, defender in [(sa, sb), (sb, sa)]:
+            self._tick_combat_state(attacker, defender)
+
+    def _tick_combat_state(self, attacker, defender):
+        """Advance one soldier's combat animation state machine."""
+        if attacker.combat_state == "READY":
+            attacker.combat_timer -= 1
+            if attacker.combat_timer <= 0:
+                attacker.combat_state = "SWINGING"
+                attacker.combat_timer = COMBAT_SWING_FRAMES
+
+        elif attacker.combat_state == "SWINGING":
+            attacker.combat_timer -= 1
+            # Damage lands at the hit frame
+            if attacker.combat_timer == COMBAT_SWING_FRAMES - COMBAT_SWING_HIT_FRAME:
+                self._resolve_hit(attacker, defender, flank_mult=1.0)
+            if attacker.combat_timer <= 0:
+                if not defender.alive:
+                    attacker.combat_state = "VICTORY_PAUSE"
+                    attacker.combat_timer = COMBAT_VICTORY_PAUSE_FRAMES
+                    attacker.paired_opponent = None
+                else:
+                    attacker.combat_state = "RECOVERING"
+                    attacker.combat_timer = COMBAT_RECOVER_FRAMES
+
+        elif attacker.combat_state == "RECOVERING":
+            attacker.combat_timer -= 1
+            if attacker.combat_timer <= 0:
+                attacker.combat_state = "READY"
+                attacker.combat_timer = COMBAT_READY_FRAMES + random.randint(-2, 2)
+
+        elif attacker.combat_state == "VICTORY_PAUSE":
+            attacker.combat_timer -= 1
+            if attacker.combat_timer <= 0:
+                attacker.combat_state = "IDLE"
+                attacker.paired_opponent = None
+
+    def _tick_assist(self, helper, enemy):
+        """Tick a 2v1 assist attack."""
+        # Face the enemy
+        helper.facing_angle = math.atan2(enemy.y - helper.y, enemy.x - helper.x)
+
+        # Move toward the enemy
+        d = distance(helper.x, helper.y, enemy.x, enemy.y)
+        if d > MELEE_RANGE:
+            dx, dy = enemy.x - helper.x, enemy.y - helper.y
+            norm = max(0.01, math.hypot(dx, dy))
+            speed = min(0.8, d - MELEE_RANGE)
+            helper.x += (dx / norm) * speed
+            helper.y += (dy / norm) * speed
+
+        self._tick_combat_state(helper, enemy)
+
+    def _resolve_hit(self, attacker, defender, flank_mult=1.0):
+        """Resolve a melee hit using existing soldier.attack() math."""
+        dmg = attacker.attack(defender, is_charging=False, flank_mult=flank_mult)
+        if dmg > 0:
+            # Spawn spark at hit position
+            self.spark_events.append({
+                "x": (attacker.x + defender.x) * 0.5,
+                "y": (attacker.y + defender.y) * 0.5,
+                "timer": 8,
+                "angles": [random.uniform(0, math.pi * 2) for _ in range(3)],
+            })
+        if dmg > 0 and not defender.alive:
+            # Record the kill on the attacker's squad
+            attacker_squad = self._squad_for_soldier(attacker)
+            defender_squad = self._squad_for_soldier(defender)
+            if attacker_squad:
+                attacker_squad.kills += 1
+            if defender_squad:
+                defender_squad._dying_soldiers.append(defender)
+                defender_squad.on_casualty()
+
+    # ------------------------------------------------------------------
+    # Reassignment: winners help neighbors
+    # ------------------------------------------------------------------
+
+    def _reassign_unpaired(self):
+        """Match unpaired soldiers to new opponents or ally-assist slots."""
+        paired_ids = set()
+        for a, b in self.pairs:
+            paired_ids.add(id(a))
+            paired_ids.add(id(b))
+        for h, ally, enemy in self.assists:
+            paired_ids.add(id(h))
+
+        free_a = [s for s in self._all_alive_a()
+                  if id(s) not in paired_ids and s.combat_state not in ("VICTORY_PAUSE", "SWINGING")]
+        free_b = [s for s in self._all_alive_b()
+                  if id(s) not in paired_ids and s.combat_state not in ("VICTORY_PAUSE", "SWINGING")]
+
+        # Priority 1: pair free soldiers with each other
+        n = min(len(free_a), len(free_b))
+        for i in range(n):
+            sa, sb = free_a[i], free_b[i]
+            sa.paired_opponent = sb
+            sb.paired_opponent = sa
+            sa.combat_state = "READY"
+            sa.combat_timer = COMBAT_READY_FRAMES + random.randint(-2, 2)
+            sb.combat_state = "READY"
+            sb.combat_timer = COMBAT_READY_FRAMES + random.randint(-2, 2)
+            self.pairs.append((sa, sb))
+
+        # Priority 2: surplus soldiers assist allies (2v1)
+        if len(free_a) > len(free_b):
+            surplus = free_a[n:]
+            surplus_is_a = True
         else:
-            self.heading = math.atan2(dy, dx)
+            surplus = free_b[n:]
+            surplus_is_a = False
 
-        # Battleground center as the midpoint between squad centers
-        self.center_x = (ax + bx) * 0.5
-        self.center_y = (ay + by) * 0.5
-
-        # Per-soldier positioning: keep squad in formation around battleground center
-        # and keep facing aligned with heading.
-        cos_a = math.cos(self.heading)
-        sin_a = math.sin(self.heading)
-
-        # Helper to rotate formation offset around center
-        def rotate_off(xo, yo):
-            return (xo * cos_a - yo * sin_a, xo * sin_a + yo * cos_a)
-
-        # Reposition all soldiers in A
-        for s in self.a.alive_soldiers:
-            rox, roy = rotate_off(s.formation_x, s.formation_y)
-            s.x = self.center_x + rox
-            s.y = self.center_y + roy
-            s.facing_angle = self.heading
-
-        # Reposition all soldiers in B
-        for s in self.b.alive_soldiers:
-            rox, roy = rotate_off(s.formation_x, s.formation_y)
-            s.x = self.center_x + rox
-            s.y = self.center_y + roy
-            s.facing_angle = self.heading
-
-        # Lightweight micro-melee inside battleground: any close pairs engage
-        for sa in self.a.alive_soldiers:
-            if sa.attack_cooldown > 0:
-                continue
-            target = None
-            best = None
-            best_dist = MELEE_RANGE * 1.5
-            for sb in self.b.alive_soldiers:
-                d = distance(sa.x, sa.y, sb.x, sb.y)
+        for s in surplus:
+            # Find nearest active pair where we can assist
+            best_pair = None
+            best_dist = 999999
+            for a, b in self.pairs:
+                ally = a if surplus_is_a else b
+                d = distance(s.x, s.y, ally.x, ally.y)
                 if d < best_dist:
                     best_dist = d
-                    best = sb
-            if best and best_dist <= MELEE_RANGE:
-                dmg = sa.attack(best, is_charging=False)
-                if dmg > 0 and not best.alive:
-                    self.b.kills += 1
-                    self.b._dying_soldiers.append(best)
-                    self.b.on_casualty()
+                    best_pair = (a, b)
+            if best_pair and best_dist < MELEE_RANGE * 6:
+                enemy = best_pair[1] if surplus_is_a else best_pair[0]
+                ally = best_pair[0] if surplus_is_a else best_pair[1]
+                self.assists.append((s, ally, enemy))
+                s.combat_state = "READY"
+                s.combat_timer = COMBAT_READY_FRAMES + random.randint(-2, 2)
 
-        # End condition: terminate if one side is all dead
-        if self.a.alive_count == 0 or self.b.alive_count == 0:
+    def _advance_unpaired(self):
+        """Move unpaired IDLE soldiers toward the enemy line."""
+        paired_ids = set()
+        for a, b in self.pairs:
+            paired_ids.add(id(a))
+            paired_ids.add(id(b))
+        for h, ally, enemy in self.assists:
+            paired_ids.add(id(h))
+
+        cos_h = math.cos(self.heading)
+        sin_h = math.sin(self.heading)
+
+        for s in self._all_alive_a():
+            if id(s) not in paired_ids and s.combat_state == "IDLE":
+                s.x += cos_h * 0.3
+                s.y += sin_h * 0.3
+        for s in self._all_alive_b():
+            if id(s) not in paired_ids and s.combat_state == "IDLE":
+                s.x -= cos_h * 0.3
+                s.y -= sin_h * 0.3
+
+    # ------------------------------------------------------------------
+    # Reinforcements
+    # ------------------------------------------------------------------
+
+    def add_reinforcement(self, squad, side):
+        """Add a reinforcing squad to the combat zone.
+
+        Args:
+            squad: The Squad joining the fight.
+            side: 'a' or 'b' — which side they join.
+        """
+        squad.battleground = self
+        squad._pre_zone_x, squad._pre_zone_y = squad.x, squad.y
+        if side == 'a':
+            self.squads_a.append(squad)
+            facing = self.heading
+        else:
+            self.squads_b.append(squad)
+            facing = self.heading + math.pi
+
+        # Position the reinforcing squad at the flank of the existing line
+        cos_h = math.cos(self.heading)
+        sin_h = math.sin(self.heading)
+        perp_x = -sin_h
+        perp_y = cos_h
+
+        # Find lateral extent of existing soldiers on this side
+        existing = self._all_alive_a() if side == 'a' else self._all_alive_b()
+        if existing:
+            laterals = [s.x * perp_x + s.y * perp_y for s in existing]
+            max_lateral = max(laterals)
+            flank_offset = max_lateral + SOLDIER_SPACING * 3
+        else:
+            flank_offset = 0
+
+        half_sep = self.separation * 0.5
+        sign = -1 if side == 'a' else 1
+        anchor_x = self.zone_center_x + cos_h * half_sep * sign + perp_x * flank_offset
+        anchor_y = self.zone_center_y + sin_h * half_sep * sign + perp_y * flank_offset
+
+        self._place_squad(squad, anchor_x, anchor_y, facing)
+
+        # Morale shock to the opposing side
+        for sq in (self.squads_b if side == 'a' else self.squads_a):
+            sq.apply_morale_modifier(COMBAT_REINFORCEMENT_MORALE_SHOCK)
+
+    # ------------------------------------------------------------------
+    # Squad extraction (retreat)
+    # ------------------------------------------------------------------
+
+    def extract_squad(self, squad):
+        """Remove a squad from the combat zone (voluntary retreat).
+
+        Clears combat state, reforms the squad at its pre-zone position,
+        and applies a morale penalty.
+        """
+        # Clear combat state for this squad's soldiers only
+        squad_soldier_ids = {id(s) for s in squad.soldiers}
+        for s in squad.soldiers:
+            s.paired_opponent = None
+            s.combat_state = "IDLE"
+            s.combat_timer = 0
+
+        # Remove from pairs/assists involving this squad's soldiers
+        self.pairs = [(a, b) for a, b in self.pairs
+                      if id(a) not in squad_soldier_ids and id(b) not in squad_soldier_ids]
+        self.assists = [(h, a, e) for h, a, e in self.assists
+                        if id(h) not in squad_soldier_ids]
+
+        # Remove from side lists
+        if squad in self.squads_a:
+            self.squads_a.remove(squad)
+        if squad in self.squads_b:
+            self.squads_b.remove(squad)
+        squad.battleground = None
+
+        # Reform at pre-zone position
+        cx = getattr(squad, '_pre_zone_x', squad.x)
+        cy = getattr(squad, '_pre_zone_y', squad.y)
+        squad.x, squad.y = cx, cy
+        squad._reposition_formation()
+        for s in squad.alive_soldiers:
+            rox, roy = squad._rotate_offset(s.formation_x, s.formation_y)
+            s.x = cx + rox
+            s.y = cy + roy
+
+        # Morale penalty for retreating
+        squad.apply_morale_modifier(RETREAT_MORALE_PENALTY)
+
+        # If one side is now empty, terminate zone
+        if not self.squads_a or not self.squads_b:
             self.terminate()
 
+    # ------------------------------------------------------------------
+    # Generals
+    # ------------------------------------------------------------------
+
+    def add_general(self, general, side):
+        """Add a general to the combat zone on the given side."""
+        if side == 'a':
+            self.generals_a.append(general)
+        else:
+            self.generals_b.append(general)
+        general._in_combat_zone = self
+
+        # Position general behind the line
+        cos_h = math.cos(self.heading)
+        sin_h = math.sin(self.heading)
+        sign = -1 if side == 'a' else 1
+        offset = self.separation * 1.5  # behind the front line
+        general.x = self.zone_center_x + cos_h * offset * sign
+        general.y = self.zone_center_y + sin_h * offset * sign
+
+    def _tick_generals(self):
+        """Tick general combat actions in the zone (splash damage)."""
+        for gen_list, enemy_soldiers_fn in [
+            (self.generals_a, self._all_alive_b),
+            (self.generals_b, self._all_alive_a),
+        ]:
+            enemies = enemy_soldiers_fn()
+            if not enemies:
+                continue
+            for g in list(gen_list):
+                if not g.alive:
+                    gen_list.remove(g)
+                    g._in_combat_zone = None
+                    continue
+                if g.attack_cooldown > 0:
+                    continue
+
+                # Pick a random enemy from active pairs
+                target = random.choice(enemies)
+                attack_power = g.melee_attack * (1.0 + g.level * 0.15)
+
+                # Apply ability buffs
+                if getattr(g, '_bloodlust_active', False):
+                    attack_power *= 1.5
+                if getattr(g, '_one_man_army_active', False):
+                    attack_power *= 2.0
+                if getattr(g, '_avatar_active', False):
+                    attack_power *= 2.5
+
+                # Primary hit
+                effective_armor = target.stats.armor * random.uniform(0.5, 1.0)
+                damage = max(1, attack_power * random.uniform(0.8, 1.2) - effective_armor * 0.3)
+                target.health -= damage
+                target.hit_flash_timer = 6
+
+                # Spawn spark
+                self.spark_events.append({
+                    "x": target.x, "y": target.y,
+                    "timer": 8,
+                    "angles": [random.uniform(0, math.pi * 2) for _ in range(3)],
+                })
+
+                # General attack visual effect
+                if not hasattr(g, '_attack_effects'):
+                    g._attack_effects = []
+                g._attack_effects.append({
+                    "type": "slash",
+                    "x": target.x, "y": target.y,
+                    "angle": math.atan2(target.y - g.y, target.x - g.x),
+                    "timer": 8,
+                })
+
+                if target.health <= 0:
+                    target.health = 0
+                    target.alive = False
+                    target.death_timer = 15
+                    target.death_alpha = 1.0
+                    target_squad = self._squad_for_soldier(target)
+                    if target_squad:
+                        target_squad._dying_soldiers.append(target)
+                        target_squad.on_casualty()
+                    g.kills += 1
+
+                # Splash: hit 1-2 nearby enemies
+                splash_count = 0
+                splash_dmg = damage * 0.4
+                for es in enemies:
+                    if es is target or not es.alive:
+                        continue
+                    if distance(target.x, target.y, es.x, es.y) < GENERAL_ZONE_SPLASH_RADIUS:
+                        es_armor = es.stats.armor * random.uniform(0.5, 1.0)
+                        s_dmg = max(1, splash_dmg - es_armor * 0.3)
+                        es.health -= s_dmg
+                        es.hit_flash_timer = 6
+                        if es.health <= 0:
+                            es.health = 0
+                            es.alive = False
+                            es.death_timer = 15
+                            es.death_alpha = 1.0
+                            es_squad = self._squad_for_soldier(es)
+                            if es_squad:
+                                es_squad._dying_soldiers.append(es)
+                                es_squad.on_casualty()
+                            g.kills += 1
+                        splash_count += 1
+                        if splash_count >= 2:
+                            break
+
+                g.attack_cooldown = 30
+
+    # ------------------------------------------------------------------
+    # Drawing
+    # ------------------------------------------------------------------
+
+    def draw(self, surface, camera):
+        """Render combat zone visual effects: dust, sparks, swing arcs."""
+        if not self.active:
+            return
+
+        # Distributed dust: one puff per 3 active pairs
+        for i, (a, b) in enumerate(self.pairs):
+            if (self._dust_frame + i * 7) % 9 != 0:
+                continue
+            mx = (a.x + b.x) * 0.5
+            my = (a.y + b.y) * 0.5
+            sx, sy = camera.world_to_screen(mx, my)
+            phase = ((self._dust_frame + i * 7) % 30) / 30.0
+            dr = int(camera.scale(5 + 8 * phase))
+            alpha = int(40 * (1.0 - phase))
+            if dr > 0 and alpha > 0:
+                dust_surf = pygame.Surface((dr * 2, dr * 2), pygame.SRCALPHA)
+                pygame.draw.circle(dust_surf, (180, 155, 110, alpha), (dr, dr), dr)
+                surface.blit(dust_surf, (sx - dr, sy - dr))
+
+        # Clash sparks at individual hit positions
+        for e in self.spark_events:
+            if e["timer"] <= 0:
+                continue
+            sx, sy = camera.world_to_screen(e["x"], e["y"])
+            progress = e["timer"] / 8.0
+            for angle in e["angles"]:
+                spark_len = camera.scale(8) * progress
+                ex = int(sx + math.cos(angle) * spark_len)
+                ey = int(sy + math.sin(angle) * spark_len)
+                pygame.draw.line(surface, (255, 220, 60), (sx, sy), (ex, ey), 2)
+
+        # Swing arcs for soldiers currently in SWINGING state
+        all_soldiers = self._all_alive_a() + self._all_alive_b()
+        for s in all_soldiers:
+            if s.combat_state == "SWINGING" and s.paired_opponent and s.paired_opponent.alive:
+                ax, ay = camera.world_to_screen(s.x, s.y)
+                bx, by = camera.world_to_screen(
+                    s.paired_opponent.x, s.paired_opponent.y)
+                progress = 1.0 - s.combat_timer / COMBAT_SWING_FRAMES
+                arc_len = camera.scale(10) * progress
+                angle = math.atan2(by - ay, bx - ax)
+                ex = int(ax + math.cos(angle) * arc_len)
+                ey = int(ay + math.sin(angle) * arc_len)
+                fade = max(0, 255 - int(255 * progress))
+                pygame.draw.line(surface, (255, 255, fade),
+                                 (int(ax), int(ay)), (ex, ey),
+                                 max(1, camera.scale(2)))
+
+    # ------------------------------------------------------------------
+    # Termination
+    # ------------------------------------------------------------------
+
     def terminate(self):
+        """Deactivate this combat zone, unlink squads, and reform formations.
+
+        Winners hold the ground (reform at current center), losers reform at
+        their pre-zone position so squads don't appear to teleport.
+        """
         self.active = False
-        # Clear links back to battlegrounds
-        if self.a and self.a.battleground is self:
-            self.a.battleground = None
-        if self.b and self.b.battleground is self:
-            self.b.battleground = None
-        self.a = None
-        self.b = None
+
+        # Determine which side has survivors
+        alive_a = any(s.alive for sq in self.squads_a for s in sq.soldiers)
+        alive_b = any(s.alive for sq in self.squads_b for s in sq.soldiers)
+
+        for sq in self.squads_a + self.squads_b:
+            if not sq:
+                continue
+            if sq.battleground is self:
+                sq.battleground = None
+            # Clear combat state on all soldiers
+            for s in sq.soldiers:
+                s.paired_opponent = None
+                s.combat_state = "IDLE"
+                s.combat_timer = 0
+
+            # Determine if this squad's side won
+            is_winner = (sq in self.squads_a and alive_a and not alive_b) or \
+                        (sq in self.squads_b and alive_b and not alive_a)
+
+            if is_winner:
+                # Winners hold the ground — reform around current center
+                cx, cy = sq.center
+            else:
+                # Losers/draws reform at pre-zone position
+                cx = getattr(sq, '_pre_zone_x', sq.x)
+                cy = getattr(sq, '_pre_zone_y', sq.y)
+
+            sq.x, sq.y = cx, cy
+            sq._reposition_formation()
+            for s in sq.alive_soldiers:
+                rox, roy = sq._rotate_offset(s.formation_x, s.formation_y)
+                s.x = cx + rox
+                s.y = cy + roy
+
+        # Clear general zone references
+        for g in getattr(self, 'generals_a', []) + getattr(self, 'generals_b', []):
+            g._in_combat_zone = None
+
+        self.squads_a = []
+        self.squads_b = []
+        self.generals_a = []
+        self.generals_b = []
+        self.pairs = []
+        self.assists = []
+
+
+# Legacy alias for backwards compatibility with existing imports
+Battleground = CombatZone

@@ -72,6 +72,15 @@ def tick_battle(scene):
 
     scene._combat_engine.step()
 
+    # Update combat zones (once per tick, not from individual squads)
+    for zone in getattr(scene, 'combat_zones', []):
+        zone.reset_tick_guard()
+    for zone in getattr(scene, 'combat_zones', []):
+        if zone.active:
+            zone.update()
+    # Clean up terminated zones
+    scene.combat_zones = [z for z in getattr(scene, 'combat_zones', []) if z.active]
+
     if scene.terrain_type == "coastal":
         for squad in scene.all_squads:
             for soldier in squad.soldiers:

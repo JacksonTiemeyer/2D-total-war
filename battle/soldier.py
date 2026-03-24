@@ -42,6 +42,11 @@ class Soldier:
         self.hit_flash_timer = 0    # frames remaining for white flash
         self.death_timer = -1       # -1 = alive, >0 = dying animation frames
         self.death_alpha = 1.0      # fade out on death
+        # Combat zone animation state
+        self.combat_state = "IDLE"    # IDLE | READY | SWINGING | RECOVERING | VICTORY_PAUSE
+        self.combat_timer = 0         # frames remaining in current combat state
+        self.paired_opponent = None   # enemy Soldier reference (1v1 duel)
+        self.shield_block_flash = 0   # frames remaining for blue-white shield block flash
         # Trait state
         self.poison_timer = 0       # frames remaining for poison DOT
         self.poison_dps = 0.0       # poison damage per frame
@@ -99,6 +104,7 @@ class Soldier:
 
         if self.stats.shield and random.random() < 0.2:
             base_damage *= 0.5  # shield block
+            self.shield_block_flash = 4
 
         # Global combat tuning: make battles last longer.
         damage = max(1, base_damage * INCOMING_DAMAGE_MULT)
@@ -207,6 +213,8 @@ class Soldier:
             self.attack_cooldown -= 1
         if self.hit_flash_timer > 0:
             self.hit_flash_timer -= 1
+        if self.shield_block_flash > 0:
+            self.shield_block_flash -= 1
         if self.death_timer > 0:
             self.death_timer -= 1
             self.death_alpha = max(0, self.death_timer / 15.0)

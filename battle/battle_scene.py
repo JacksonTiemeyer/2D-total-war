@@ -68,6 +68,7 @@ class BattleScene:
         self.battle_timer = 0
         self.speed_multiplier = 1
         self.fog_enabled = True  # fog of war toggle
+        self.combat_zones = []  # active CombatZone instances
 
         # Right-click drag state for facing control
         self._right_dragging = False
@@ -161,9 +162,12 @@ class BattleScene:
         grid = {}
 
         # Build spatial grid of all living soldiers
+        # Skip idle squads not in combat zones to prevent drift from external pushes
         all_soldiers = []
         for sq in self.all_squads:
             if sq.is_destroyed or sq.state == SquadState.ROUTED:
+                continue
+            if sq.state == SquadState.IDLE and getattr(sq, 'battleground', None) is None:
                 continue
             for s in sq.alive_soldiers:
                 cx = int(s.x // cell_size)
@@ -219,13 +223,30 @@ class BattleScene:
                                 s1.engaged_with = s2
                             if s2.engaged_with is None:
                                 s2.engaged_with = s1
-                            # NEW: spawn Battleground for this opposing squad pair if neither is in one
+                            # Spawn CombatZone for opposing squads if neither is in one
                             if getattr(sq1, 'battleground', None) is None and getattr(sq2, 'battleground', None) is None:
                                 try:
-                                    from battle.battleground import Battleground
-                                    Battleground(sq1, sq2)
+                                    from battle.battleground import CombatZone
+                                    zone = CombatZone(sq1, sq2)
+                                    self.combat_zones.append(zone)
+                                    # Add attached generals to the zone
+                                    self._add_generals_to_zone(zone, sq1, 'a')
+                                    self._add_generals_to_zone(zone, sq2, 'b')
                                 except Exception:
                                     pass
+                            # If one squad is already in a zone, add the other as reinforcement
+                            elif getattr(sq1, 'battleground', None) is not None and getattr(sq2, 'battleground', None) is None:
+                                zone = sq1.battleground
+                                if zone.active:
+                                    side = 'b' if sq1 in zone.squads_a else 'a'
+                                    zone.add_reinforcement(sq2, side)
+                                    self._add_generals_to_zone(zone, sq2, side)
+                            elif getattr(sq2, 'battleground', None) is not None and getattr(sq1, 'battleground', None) is None:
+                                zone = sq2.battleground
+                                if zone.active:
+                                    side = 'b' if sq2 in zone.squads_a else 'a'
+                                    zone.add_reinforcement(sq1, side)
+                                    self._add_generals_to_zone(zone, sq1, side)
 
                         if dist_sq >= push_radius * push_radius or dist_sq < 0.01:
                             continue
@@ -329,6 +350,13 @@ class BattleScene:
                                 g.kills += 1
                                 sq._dying_soldiers.append(s)
                                 sq.on_casualty()
+
+    def _add_generals_to_zone(self, zone, squad, side):
+        """If a squad has an attached general, add them to the combat zone."""
+        for g in self.all_generals:
+            if g.alive and getattr(g, 'attached_squad', None) is squad:
+                if getattr(g, '_in_combat_zone', None) is None:
+                    zone.add_general(g, side)
 
     def _estimate_formation_depth(self, squad):
         """Estimate how many rows deep a formation is (for punch-through check)."""
@@ -720,6 +748,11 @@ class BattleScene:
                 fog_hidden = (sq.team != 0 and not sq.visible and self.fog_enabled)
                 sq.draw(surface, self.camera, fog_hidden=fog_hidden)
 
+        # Draw active combat zone effects (dust, sparks, swing arcs)
+        for zone in self.combat_zones:
+            if zone.active:
+                zone.draw(surface, self.camera)
+
         for g in self.all_generals:
             fog_hidden = (g.team != 0 and not g.visible and self.fog_enabled)
             g.draw(surface, self.camera, fog_hidden=fog_hidden)
@@ -845,13 +878,25 @@ class BattleScene:
                              (int(sx1), int(sy1)), (int(sx2), int(sy2)), 2)
             pygame.draw.circle(target_surf, color, (int(sx2), int(sy2)), 4)
 
-        # General targeting indicator (move waypoint or attack target).
+        # General targeting indicator (move waypoint, attack target, or duel).
         if self.selected_general and self.selected_general.alive:
             g = self.selected_general
             gsx, gsy = self.camera.world_to_screen(g.x, g.y)
 
+            # Duel indicator (highest priority) — red line to duel opponent
+            if getattr(g, "duel_opponent", None) and g.duel_opponent.alive:
+                osx, osy = self.camera.world_to_screen(g.duel_opponent.x, g.duel_opponent.y)
+                duel_color = (255, 50, 50, 180)
+                pygame.draw.line(target_surf, duel_color, (int(gsx), int(gsy)), (int(osx), int(osy)), 2)
+                pygame.draw.circle(target_surf, duel_color, (int(osx), int(osy)), 12, 2)
+                # Crossed-swords icon: two small X lines at midpoint
+                mx, my = (gsx + osx) / 2, (gsy + osy) / 2
+                pygame.draw.line(target_surf, (255, 220, 60, 200),
+                                 (int(mx - 6), int(my - 6)), (int(mx + 6), int(my + 6)), 2)
+                pygame.draw.line(target_surf, (255, 220, 60, 200),
+                                 (int(mx + 6), int(my - 6)), (int(mx - 6), int(my + 6)), 2)
             # Attack target -> squad center marker
-            if getattr(g, "target_squad", None) and not g.target_squad.is_destroyed:
+            elif getattr(g, "target_squad", None) and not g.target_squad.is_destroyed:
                 tx, ty = g.target_squad.center
                 tsx, tsy = self.camera.world_to_screen(tx, ty)
                 gcolor = (100, 200, 255, 120) if g.team == 0 else (255, 80, 80, 90)

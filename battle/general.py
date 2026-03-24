@@ -83,6 +83,8 @@ class General:
         self._scout_active = False
         self._all_enemy_generals = []  # set by battle scene
         self.visible = True  # fog of war
+        self._in_combat_zone = None    # CombatZone reference (set by zone)
+        self._attack_effects = []      # visual effects for melee attacks
 
         # Player class abilities (overrides type-based if provided)
         self.player_class = None
@@ -252,6 +254,18 @@ class General:
             self.x = cx
             self.y = cy
 
+        # Auto-challenge nearby enemy generals for a duel
+        if self.duel_state == DuelState.NONE:
+            for eg in getattr(self, '_all_enemy_generals', []):
+                if (eg.alive and eg.duel_state == DuelState.NONE
+                        and distance(self.x, self.y, eg.x, eg.y) < DUEL_RANGE):
+                    self.challenge_duel(eg)
+                    break
+
+        # If in a combat zone, skip normal melee (zone handles general combat)
+        if getattr(self, '_in_combat_zone', None) is not None:
+            return
+
         # General melee combat: attack nearby enemy soldiers
         if self.attack_cooldown == 0:
             best_target = None
@@ -278,8 +292,19 @@ class General:
                 effective_armor = soldier.stats.armor * random.uniform(0.5, 1.0)
                 damage = max(1, attack_power * random.uniform(0.8, 1.2) - effective_armor * 0.3)
                 soldier.health -= damage
+                soldier.hit_flash_timer = 6
+                # Spawn attack visual effect (slash arc)
+                self._attack_effects.append({
+                    "type": "slash",
+                    "x": soldier.x, "y": soldier.y,
+                    "angle": math.atan2(soldier.y - self.y, soldier.x - self.x),
+                    "timer": 8,
+                })
                 if soldier.health <= 0:
                     soldier.alive = False
+                    soldier.death_timer = 15
+                    soldier.death_alpha = 1.0
+                    squad._dying_soldiers.append(soldier)
                     squad.on_casualty()
                     self.kills += 1
                     # Soul Harvest: restore ability charges
@@ -571,6 +596,43 @@ class General:
             glow_surf = pygame.Surface((glow_r * 2, glow_r * 2), pygame.SRCALPHA)
             pygame.draw.circle(glow_surf, (120, 0, 200, 60), (glow_r, glow_r), glow_r)
             surface.blit(glow_surf, (sx - glow_r, sy - glow_r))
+
+        # Combat zone glow (subtle gold ring when in a zone)
+        if getattr(self, '_in_combat_zone', None) is not None:
+            zone_r = camera.scale(GENERAL_RADIUS + 5)
+            zone_surf = pygame.Surface((zone_r * 2, zone_r * 2), pygame.SRCALPHA)
+            pygame.draw.circle(zone_surf, (255, 215, 0, 50), (zone_r, zone_r), zone_r)
+            surface.blit(zone_surf, (sx - zone_r, sy - zone_r))
+
+        # Attack visual effects (slash arcs, impact rings)
+        effects = getattr(self, '_attack_effects', [])
+        for eff in effects:
+            if eff["timer"] <= 0:
+                continue
+            esx, esy = camera.world_to_screen(eff["x"], eff["y"])
+            progress = 1.0 - eff["timer"] / 8.0
+            if eff["type"] == "slash":
+                # Slash arc from general toward target
+                arc_len = camera.scale(12) * progress
+                angle = eff["angle"]
+                ex = int(esx + math.cos(angle) * arc_len)
+                ey = int(esy + math.sin(angle) * arc_len)
+                fade = max(0, 255 - int(255 * progress))
+                pygame.draw.line(surface, (255, 255, fade),
+                                 (int(sx), int(sy)), (ex, ey),
+                                 max(1, camera.scale(2)))
+                # Impact ring at target
+                ring_r = int(camera.scale(6) * progress)
+                if ring_r > 0:
+                    ring_surf = pygame.Surface((ring_r * 2, ring_r * 2), pygame.SRCALPHA)
+                    ring_alpha = max(0, int(180 * (1.0 - progress)))
+                    pygame.draw.circle(ring_surf, (255, 200, 60, ring_alpha),
+                                       (ring_r, ring_r), ring_r, 1)
+                    surface.blit(ring_surf, (esx - ring_r, esy - ring_r))
+        # Tick attack effect timers
+        self._attack_effects = [e for e in effects if e["timer"] > 0]
+        for e in self._attack_effects:
+            e["timer"] -= 1
 
         # General body - circle with outer ring + gold accent
         inner_r = max(1, int(r))

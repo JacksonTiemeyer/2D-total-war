@@ -201,6 +201,23 @@ FORMATION_LOOSE_SPACING_MULT = 1.8   # wider spacing
 FORMATION_WEDGE_ANGLE = 0.6          # radians, half-angle of V
 COHESION_LIMIT = 20                  # max stray distance before auto-reform
 
+# Combat Zone (melee engagement animation)
+COMBAT_READY_FRAMES = 10             # frames in ready stance before swing
+COMBAT_SWING_FRAMES = 6              # frames for swing animation
+COMBAT_SWING_HIT_FRAME = 3           # damage lands on this frame of the swing
+COMBAT_RECOVER_FRAMES = 12           # frames recovering after swing
+COMBAT_VICTORY_PAUSE_FRAMES = 12     # frames of pause after killing opponent
+COMBAT_ZONE_SEPARATION = 12.0        # initial distance between squad lines
+COMBAT_ASSIST_FLANK_BONUS = 1.3      # damage bonus for 2v1 assist attacks
+COMBAT_ASSIST_RECOVERY_PENALTY = 0.3 # recovery time increase when outnumbered
+COMBAT_REINFORCEMENT_MORALE_SHOCK = -8  # morale hit when enemy reinforcements arrive
+
+# CombatZone retreat/extraction
+RETREAT_MORALE_PENALTY = -15             # morale hit when retreating from a combat zone
+RETREAT_SPEED_DEBUFF = 0.7               # speed multiplier after retreating from combat
+RETREAT_DEBUFF_FRAMES = 120              # duration of retreat speed debuff
+GENERAL_ZONE_SPLASH_RADIUS = 20          # AoE radius for general attacks in combat zones
+
 # Massive unit visual scale
 MASSIVE_VISUAL_SCALE = 1.8           # soldier radius multiplier for massive units
 

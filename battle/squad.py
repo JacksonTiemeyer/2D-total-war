@@ -209,6 +209,13 @@ class Squad:
             ox = (col - cols / 2.0 + 0.5) * spacing
             oy = (row - rows / 2.0 + 0.5) * spacing
             offsets.append((ox, oy))
+        # Center the offsets so their average is (0,0). This prevents
+        # formations with incomplete last rows from drifting when
+        # _check_cohesion repositions soldiers around the squad center.
+        if offsets:
+            avg_x = sum(o[0] for o in offsets) / len(offsets)
+            avg_y = sum(o[1] for o in offsets) / len(offsets)
+            offsets = [(ox - avg_x, oy - avg_y) for ox, oy in offsets]
         return offsets
 
     def _wedge_offsets(self, count, spacing):
@@ -225,6 +232,11 @@ class Squad:
                 offsets.append((ox, oy))
                 placed += 1
             row += 1
+        # Center offsets to prevent formation drift
+        if offsets:
+            avg_x = sum(o[0] for o in offsets) / len(offsets)
+            avg_y = sum(o[1] for o in offsets) / len(offsets)
+            offsets = [(ox - avg_x, oy - avg_y) for ox, oy in offsets]
         return offsets
 
     def _reposition_formation(self):
@@ -245,15 +257,23 @@ class Squad:
         )
 
     def _check_cohesion(self):
-        """Auto-reform if any soldier strays beyond COHESION_LIMIT from center."""
+        """Auto-reform if any soldier strays beyond expected formation extent."""
         if self.state in (SquadState.ROUTED, SquadState.BROKEN):
             return
         alive = self.alive_soldiers
         if not alive:
             return
         cx, cy = self.x, self.y
+        # Compute the expected max extent from current formation offsets
+        # (add a tolerance of COHESION_LIMIT so we only snap when truly stray)
+        expected_max = 0
+        for s in alive:
+            d = math.hypot(s.formation_x, s.formation_y)
+            if d > expected_max:
+                expected_max = d
+        cohesion_threshold = expected_max + COHESION_LIMIT
         max_dist = max(distance(s.x, s.y, cx, cy) for s in alive)
-        if max_dist > COHESION_LIMIT:
+        if max_dist > cohesion_threshold:
             self._reposition_formation()
             for s in alive:
                 rox, roy = self._rotate_offset(s.formation_x, s.formation_y)
@@ -383,6 +403,10 @@ class Squad:
                 self.idle_frames >= BRACE_MIN_IDLE_FRAMES)
 
     def give_move_order(self, tx, ty, movement_mode=None):
+        # If in a combat zone, extract (retreat) first
+        zone = getattr(self, 'battleground', None)
+        if zone is not None and zone.active:
+            zone.extract_squad(self)
         self.target_x = tx
         self.target_y = ty
         self.target_squad = None
@@ -414,15 +438,14 @@ class Squad:
         self._alive_cache = None
         if self.is_destroyed:
             return
-        # If part of a Battleground, delegate per-frame to the Battleground and skip standard movement
-        if getattr(self, 'battleground', None) is not None and self.battleground is not None:
-            self.battleground.update()
-            return
+        in_combat_zone = getattr(self, 'battleground', None) is not None
 
-        # Update individual soldiers and sync facing angle
+        # Update individual soldiers (cooldowns, poison, regen) and sync facing
         for s in self.alive_soldiers:
             s.update()
-            s.facing_angle = self.facing_angle
+            # Only sync facing when NOT in a combat zone (zone controls facing)
+            if not in_combat_zone:
+                s.facing_angle = self.facing_angle
 
         # Mana regeneration
         if self.max_mana > 0 and self.mana < self.max_mana:
@@ -474,16 +497,18 @@ class Squad:
         if self.morale_immune:
             pass  # never rout, never break
         elif self.state == SquadState.ROUTED:
+            # Leave combat zone if routing
+            if in_combat_zone:
+                self.battleground.terminate()
+                in_combat_zone = False
             self._do_rout()
             return
         elif self.morale <= MORALE_ROUT_THRESHOLD:
             # Hold the Line ability prevents routing
             if not getattr(self, '_hold_the_line', False):
                 if self.state != SquadState.BROKEN:
-                    # First drop to BROKEN; will rout next frame if morale stays low
                     self.state = SquadState.BROKEN
                 else:
-                    # Already broken — now fully rout
                     self.state = SquadState.ROUTED
             return
         elif self.morale <= MORALE_BREAK_THRESHOLD and self.state != SquadState.BROKEN:
@@ -492,11 +517,24 @@ class Squad:
             self.target_y = self.y + math.sin(self.facing_angle + math.pi) * 200
 
         if self.state == SquadState.BROKEN:
+            if in_combat_zone:
+                self.battleground.terminate()
+                in_combat_zone = False
             self._do_movement(speed_mult=0.8)
             cx, cy = self.center
             self.x, self.y = cx, cy
             if self.morale > MORALE_BREAK_THRESHOLD + 10:
                 self.state = SquadState.IDLE
+            return
+
+        # Update visual effects (dying animations etc.)
+        self._update_effects()
+
+        # If in a combat zone, skip movement/melee/collisions — the zone handles combat
+        if in_combat_zone:
+            # Update squad center from current soldier positions
+            cx, cy = self.center
+            self.x, self.y = cx, cy
             return
 
         # Auto-target if we lost our target
@@ -533,15 +571,23 @@ class Squad:
         elif self.state == SquadState.FIGHTING:
             self._do_melee()
 
-        # Update visual effects
-        self._update_effects()
         # Resolve small internal collisions within the squad to prevent overlaps
-        # which can cause visual glitches like gliding or clustering.
-        self._resolve_internal_collisions()
+        # Skip for IDLE squads to prevent drift from floating-point jitter
+        if self.state != SquadState.IDLE:
+            self._resolve_internal_collisions()
 
         # Update squad position to center of living soldiers
         cx, cy = self.center
         self.x, self.y = cx, cy
+
+        # For IDLE squads, anchor soldiers to exact formation positions
+        # to prevent accumulated drift from any external forces
+        if self.state == SquadState.IDLE:
+            for s in self.alive_soldiers:
+                rox, roy = self._rotate_offset(s.formation_x, s.formation_y)
+                s.x = self.x + rox
+                s.y = self.y + roy
+            return  # skip cohesion check -- soldiers are already in place
 
         # Cohesion anchor: reform if any soldier strays too far
         self._check_cohesion()
@@ -585,7 +631,8 @@ class Squad:
     def _resolve_internal_collisions(self):
         """Simple local collision resolution within the squad.
         Push overlapping soldiers apart to avoid exact overlaps.
-        Uses COLLISION_ENGAGE_RADIUS as the minimum allowed spacing.
+        Uses SOLDIER_SPACING as the minimum allowed distance so that
+        formation positions are not disrupted.
         """
         alive = self.alive_soldiers
         n = len(alive)
@@ -598,7 +645,7 @@ class Squad:
                 dx = b.x - a.x
                 dy = b.y - a.y
                 dist = math.hypot(dx, dy)
-                min_dist = COLLISION_ENGAGE_RADIUS
+                min_dist = SOLDIER_SPACING
                 if dist > 0 and dist < min_dist:
                     ux = dx / dist
                     uy = dy / dist
@@ -626,9 +673,11 @@ class Squad:
             goal_y = self.target_y + roy
             sdx = goal_x - s.x
             sdy = goal_y - s.y
+            sdist = math.hypot(sdx, sdy)
+            move = min(speed, sdist)  # prevent overshoot / gliding past goal
             snx, sny = normalize(sdx, sdy)
-            s.x += snx * speed
-            s.y += sny * speed
+            s.x += snx * move
+            s.y += sny * move
 
     def _do_charge(self):
         if not self.target_squad or self.target_squad.is_destroyed:
@@ -656,6 +705,16 @@ class Squad:
                     if not iron_disc:
                         self.target_squad.apply_morale_modifier(-FLANK_MORALE_SHOCK)
                     self.target_squad.being_flanked = True
+
+            # If the target is already in a CombatZone, join as reinforcement
+            target_zone = getattr(self.target_squad, 'battleground', None)
+            if target_zone is not None and target_zone.active:
+                # Determine which side we're on (opposite to target)
+                side = 'a' if self.target_squad in target_zone.squads_b else 'b'
+                target_zone.add_reinforcement(self, side)
+                self.state = SquadState.FIGHTING
+                self.charge_timer = CHARGE_WINDOW_FRAMES
+                return
 
             self.state = SquadState.FIGHTING
             # Reduced charging damage window so melee clashes don't
@@ -806,11 +865,20 @@ class Squad:
             from core.settings import BATTLE_MAP_WIDTH, BATTLE_MAP_HEIGHT
             retreat_x = max(50, min(BATTLE_MAP_WIDTH - 50, retreat_x))
             retreat_y = max(50, min(BATTLE_MAP_HEIGHT - 50, retreat_y))
-            self.movement_mode = MOVE_MODE_RUN
-            self.target_x = retreat_x
-            self.target_y = retreat_y
-            self._do_movement(speed_mult=1.2)
-            return
+
+            # Check if we can actually kite (not stuck at map edge)
+            kite_dist = math.hypot(retreat_x - self.x, retreat_y - self.y)
+            if kite_dist > 10:
+                self.movement_mode = MOVE_MODE_RUN
+                self.target_x = retreat_x
+                self.target_y = retreat_y
+                self._do_movement(speed_mult=1.2)
+                return
+
+            # Can't kite (trapped at map edge) — fall back to weak melee
+            if dist < MELEE_RANGE * 2:
+                self._do_ranged_melee_fallback()
+                return
         self.facing_angle = angle_between(self.x, self.y, tx, ty)
         ranged_dmg_mult = self.terrain_mods.get("ranged_damage_mult", 1.0) * self.vet_atk_mult
         # Precision Volley ability: +30% ranged damage
@@ -835,6 +903,32 @@ class Squad:
                     self.kills += 1
                     self.target_squad._dying_soldiers.append(target)
                     self.target_squad.on_casualty()
+
+    def _do_ranged_melee_fallback(self):
+        """Weak melee attacks for ranged units forced into close combat."""
+        if not self.target_squad or self.target_squad.is_destroyed:
+            return
+        self.facing_angle = angle_between(self.x, self.y,
+                                          *self.target_squad.center)
+        for s in self.alive_soldiers:
+            if s.attack_cooldown > 0:
+                continue
+            best = None
+            best_dist = MELEE_RANGE
+            for es in self.target_squad.alive_soldiers:
+                d = distance(s.x, s.y, es.x, es.y)
+                if d < best_dist:
+                    best_dist = d
+                    best = es
+            if best:
+                # Weak melee: 30% effectiveness via flank_mult
+                dmg = s.attack(best, is_charging=False, flank_mult=0.3)
+                if dmg > 0:
+                    self._spawn_slash_effect(s.x, s.y, best.x, best.y)
+                    if not best.alive:
+                        self.kills += 1
+                        self.target_squad._dying_soldiers.append(best)
+                        self.target_squad.on_casualty()
 
     def _auto_acquire_ranged_target(self, all_squads):
         best = None
@@ -1121,7 +1215,9 @@ class Squad:
             if self.is_massive:
                 r *= MASSIVE_VISUAL_SCALE
             hp_ratio = s.health / s.max_health
-            if s.hit_flash_timer > 0:
+            if getattr(s, 'shield_block_flash', 0) > 0:
+                c = (200, 220, 255)  # blue-white for shield block
+            elif s.hit_flash_timer > 0:
                 c = (255, 255, 255)
             else:
                 c = tuple(int(ch * (0.4 + 0.6 * hp_ratio)) for ch in color)
