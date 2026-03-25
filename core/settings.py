@@ -77,6 +77,7 @@ TEAM_COLORS_LIGHT = {
 # Battle map
 BATTLE_MAP_WIDTH = 3000
 BATTLE_MAP_HEIGHT = 2000
+DEPLOYMENT_ZONE_WIDTH = 800            # width of player deployment zone
 
 # Campaign map (Phase 3: expanded for fantasy world)
 CAMPAIGN_MAP_WIDTH = 6000
@@ -221,7 +222,14 @@ COMBAT_HIT_FLASH_TIMER = 6             # frames for hit flash visual effect
 COMBAT_DEATH_TIMER = 15                # frames for death animation
 COMBAT_SPLASH_DAMAGE_MULT = 0.4        # general splash damage as fraction of primary hit
 COMBAT_MAX_SQUADS_PER_SIDE = 4         # max squads per side in a single combat zone
+COMBAT_ZONE_CONVERGE_SPEED = 1.5       # per-frame speed for smooth zone entry convergence
+COMBAT_ZONE_CONVERGE_SNAP = 2.0        # snap to target when within this distance
 COMBAT_ASSIST_MAX_DISTANCE = 6         # max distance (in MELEE_RANGE multiples) for assists
+
+# CombatZone cavalry impact
+CAVALRY_IMPACT_FRAMES = 20              # duration of cavalry charge impact phase in zone
+CAVALRY_IMPACT_KNOCKBACK = 8.0          # knockback distance on impact hit
+CAVALRY_IMPACT_ATTACK_INTERVAL = 4      # frames between impact attacks per soldier
 
 # CombatZone generals
 GENERAL_ATTACK_COOLDOWN = 30             # frames between general attacks in combat zones

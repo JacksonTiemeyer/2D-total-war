@@ -497,9 +497,9 @@ class Squad:
         if self.morale_immune:
             pass  # never rout, never break
         elif self.state == SquadState.ROUTED:
-            # Leave combat zone if routing
+            # Leave combat zone if routing (extract this squad only, not whole zone)
             if in_combat_zone:
-                self.battleground.terminate()
+                self.battleground.extract_squad(self)
                 in_combat_zone = False
             self._do_rout()
             return
@@ -518,7 +518,7 @@ class Squad:
 
         if self.state == SquadState.BROKEN:
             if in_combat_zone:
-                self.battleground.terminate()
+                self.battleground.extract_squad(self)
                 in_combat_zone = False
             self._do_movement(speed_mult=0.8)
             cx, cy = self.center

@@ -86,6 +86,7 @@ def handle_deployment_event(scene, event):
     if event.type == pygame.KEYDOWN and (event.key == pygame.K_RETURN or event.key == pygame.K_SPACE):
         scene.deployment_phase = False
         scene._deploy_dragging = None
+        scene.selecting = False
         scene._right_click_pos = None
         scene._right_dragging = False
         scene._right_drag_pos = None
@@ -94,34 +95,87 @@ def handle_deployment_event(scene, event):
 
     if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
         wx, wy = scene.camera.screen_to_world(*event.pos)
+        shift = pygame.key.get_mods() & pygame.KMOD_SHIFT
+        clicked_squad = None
         for sq in scene.player_squads:
             if sq.is_destroyed:
                 continue
             bbox = sq.get_bounding_box()
             if point_in_rect(wx, wy, *bbox):
-                scene._deploy_dragging = sq
-                sq.selected = True
-                scene.selected_squads = [sq]
-                return
+                clicked_squad = sq
+                break
+        # Also check generals
+        clicked_general = None
+        for g in scene.player_generals:
+            if not g.alive:
+                continue
+            if distance(wx, wy, g.x, g.y) < 20:
+                clicked_general = g
+                break
+        if clicked_squad:
+            if not shift:
+                for s in scene.player_squads:
+                    s.selected = False
+                scene.selected_squads = []
+            scene._deploy_dragging = clicked_squad
+            clicked_squad.selected = True
+            if clicked_squad not in scene.selected_squads:
+                scene.selected_squads.append(clicked_squad)
+        elif clicked_general:
+            clicked_general.selected = True
+            scene.selected_general = clicked_general
+        else:
+            # Start marquee selection on empty space
+            if not shift:
+                for s in scene.player_squads:
+                    s.selected = False
+                for g in scene.player_generals:
+                    g.selected = False
+                scene.selected_squads = []
+                scene.selected_general = None
+            scene.selecting = True
+            scene.select_start = event.pos
+            scene.select_end = event.pos
+        return
 
     if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+        if getattr(scene, 'selecting', False):
+            finish_box_select(scene, event.pos)
         scene._deploy_dragging = None
 
-    if event.type == pygame.MOUSEMOTION and scene._deploy_dragging:
-        wx, wy = scene.camera.screen_to_world(*event.pos)
-        zx, zy, zw, zh = scene.deploy_zone
-        wx = max(zx + 30, min(zx + zw - 30, wx))
-        wy = max(zy + 30, min(zy + zh - 30, wy))
-        sq = scene._deploy_dragging
-        dx = wx - sq.x
-        dy = wy - sq.y
-        sq.x = wx
-        sq.y = wy
-        sq.target_x = wx
-        sq.target_y = wy
-        for s in sq.alive_soldiers:
-            s.x += dx
-            s.y += dy
+    if event.type == pygame.MOUSEMOTION:
+        if scene._deploy_dragging:
+            wx, wy = scene.camera.screen_to_world(*event.pos)
+            zx, zy, zw, zh = scene.deploy_zone
+            wx = max(zx + 30, min(zx + zw - 30, wx))
+            wy = max(zy + 30, min(zy + zh - 30, wy))
+            primary = scene._deploy_dragging
+            dx = wx - primary.x
+            dy = wy - primary.y
+            # Move all selected squads together (maintaining relative offsets)
+            for sq in scene.selected_squads:
+                new_x = sq.x + dx
+                new_y = sq.y + dy
+                # Clamp each squad within zone
+                new_x = max(zx + 30, min(zx + zw - 30, new_x))
+                new_y = max(zy + 30, min(zy + zh - 30, new_y))
+                sdx = new_x - sq.x
+                sdy = new_y - sq.y
+                sq.x = new_x
+                sq.y = new_y
+                sq.target_x = new_x
+                sq.target_y = new_y
+                for s in sq.alive_soldiers:
+                    s.x += sdx
+                    s.y += sdy
+        elif getattr(scene, 'selecting', False):
+            scene.select_end = event.pos
+        elif getattr(scene, '_right_click_pos', None):
+            dx_p = event.pos[0] - scene._right_click_pos[0]
+            dy_p = event.pos[1] - scene._right_click_pos[1]
+            if (dx_p * dx_p + dy_p * dy_p) ** 0.5 > 15:
+                scene._right_dragging = True
+            scene._right_drag_pos = event.pos
 
     if event.type == pygame.MOUSEBUTTONDOWN and event.button == 3:
         scene._right_click_pos = event.pos
@@ -138,13 +192,6 @@ def handle_deployment_event(scene, event):
                 sq.facing_angle = facing
         scene._right_click_pos = None
         scene._right_dragging = False
-
-    if event.type == pygame.MOUSEMOTION and scene._right_click_pos:
-        dx = event.pos[0] - scene._right_click_pos[0]
-        dy = event.pos[1] - scene._right_click_pos[1]
-        if (dx * dx + dy * dy) ** 0.5 > 15:
-            scene._right_dragging = True
-        scene._right_drag_pos = event.pos
 
 
 def draw_deployment(scene, surface):
@@ -169,6 +216,15 @@ def draw_deployment(scene, surface):
         surface.blit(text, (SCREEN_WIDTH // 2 - text.get_width() // 2, 90 + i * 24))
     ready_text = big_font.render("[ PRESS ENTER TO BEGIN ]", True, (200, 255, 200))
     surface.blit(ready_text, (SCREEN_WIDTH // 2 - ready_text.get_width() // 2, SCREEN_HEIGHT - 60))
+
+    # Highlight the squad being dragged
+    if scene._deploy_dragging:
+        sq = scene._deploy_dragging
+        bbox = sq.get_bounding_box()
+        bx, by = scene.camera.world_to_screen(bbox[0], bbox[1])
+        bw = scene.camera.scale(bbox[2] - bbox[0])
+        bh = scene.camera.scale(bbox[3] - bbox[1])
+        pygame.draw.rect(surface, (255, 255, 100), (int(bx), int(by), int(bw), int(bh)), 2)
 
 
 def apply_facing_from_drag(scene, release_pos):

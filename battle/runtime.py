@@ -81,6 +81,9 @@ def tick_battle(scene):
     # Clean up terminated zones
     scene.combat_zones = [z for z in getattr(scene, 'combat_zones', []) if z.active]
 
+    # Re-attach generals to squads (handles destroyed squad re-assignment)
+    scene._attach_generals_to_squads()
+
     if scene.terrain_type == "coastal":
         for squad in scene.all_squads:
             for soldier in squad.soldiers:

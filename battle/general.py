@@ -248,11 +248,12 @@ class General:
             self.x += nx * self.speed
             self.y += ny * self.speed
 
-        # If attached to a squad, follow it
+        # If attached to a squad, follow slightly behind it
         if self.attached_squad and not self.attached_squad.is_destroyed:
             cx, cy = self.attached_squad.center
-            self.x = cx
-            self.y = cy
+            offset = 15
+            self.target_x = cx - math.cos(self.attached_squad.facing_angle) * offset
+            self.target_y = cy - math.sin(self.attached_squad.facing_angle) * offset
 
         # Auto-challenge nearby enemy generals for a duel
         if self.duel_state == DuelState.NONE:

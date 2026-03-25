@@ -22,6 +22,9 @@ from core.settings import (
     COMBAT_DEATH_TIMER, COMBAT_SPLASH_DAMAGE_MULT,
     COMBAT_MAX_SQUADS_PER_SIDE, COMBAT_ASSIST_MAX_DISTANCE,
     GENERAL_ATTACK_COOLDOWN,
+    COMBAT_ZONE_CONVERGE_SPEED, COMBAT_ZONE_CONVERGE_SNAP,
+    CAVALRY_IMPACT_FRAMES, CAVALRY_IMPACT_KNOCKBACK,
+    CAVALRY_IMPACT_ATTACK_INTERVAL,
 )
 
 
@@ -79,8 +82,14 @@ class CombatZone:
         self._soldier_to_squad = {}
         self._rebuild_soldier_map()
 
+        # Cavalry impact phase: list of (squad, timer, side)
+        self._impact_squads = []
+        self._impact_soldier_ids = set()
+
         # Position squads facing each other, then compute initial pairings
         self._position_squads()
+        self._check_cavalry_impact(squad_a, 'a')
+        self._check_cavalry_impact(squad_b, 'b')
         self._compute_pairs()
 
     # ------------------------------------------------------------------
@@ -88,36 +97,108 @@ class CombatZone:
     # ------------------------------------------------------------------
 
     def _position_squads(self):
-        """Place squads on opposite sides of the contact line, facing each other."""
-        cos_h = math.cos(self.heading)
-        sin_h = math.sin(self.heading)
-        half_sep = self.separation * 0.5
+        """Set facing and smooth convergence targets for squads entering the zone.
 
-        # Anchors: offset from zone center along heading axis
-        anchor_ax = self.zone_center_x - cos_h * half_sep
-        anchor_ay = self.zone_center_y - sin_h * half_sep
-        anchor_bx = self.zone_center_x + cos_h * half_sep
-        anchor_by = self.zone_center_y + sin_h * half_sep
-
+        Instead of teleporting squads, uses each squad's current center as
+        the anchor and sets target positions for smooth convergence.
+        """
         facing_a = self.heading              # A faces toward B
         facing_b = self.heading + math.pi    # B faces toward A
 
         for sq in self.squads_a:
-            self._place_squad(sq, anchor_ax, anchor_ay, facing_a)
+            cx, cy = sq.center
+            self._set_zone_targets(sq, cx, cy, facing_a)
         for sq in self.squads_b:
-            self._place_squad(sq, anchor_bx, anchor_by, facing_b)
+            cx, cy = sq.center
+            self._set_zone_targets(sq, cx, cy, facing_b)
 
-    def _place_squad(self, squad, anchor_x, anchor_y, facing):
-        """Position a squad's soldiers around an anchor point with given facing."""
+    def _set_zone_targets(self, squad, anchor_x, anchor_y, facing):
+        """Set smooth convergence targets for a squad's soldiers."""
         cos_f = math.cos(facing)
         sin_f = math.sin(facing)
         squad.facing_angle = facing
         for s in squad.alive_soldiers:
             rox = s.formation_x * cos_f - s.formation_y * sin_f
             roy = s.formation_x * sin_f + s.formation_y * cos_f
-            s.x = anchor_x + rox
-            s.y = anchor_y + roy
+            s._zone_target_x = anchor_x + rox
+            s._zone_target_y = anchor_y + roy
             s.facing_angle = facing
+
+    def _converge_soldiers(self):
+        """Move soldiers toward their zone target positions smoothly."""
+        speed = COMBAT_ZONE_CONVERGE_SPEED
+        snap = COMBAT_ZONE_CONVERGE_SNAP
+        for s in self._all_alive_a() + self._all_alive_b():
+            tx = getattr(s, '_zone_target_x', None)
+            ty = getattr(s, '_zone_target_y', None)
+            if tx is None or ty is None:
+                continue
+            dx = tx - s.x
+            dy = ty - s.y
+            d = math.hypot(dx, dy)
+            if d < snap:
+                s.x = tx
+                s.y = ty
+                s._zone_target_x = None
+                s._zone_target_y = None
+            else:
+                s.x += (dx / d) * speed
+                s.y += (dy / d) * speed
+
+    # ------------------------------------------------------------------
+    # Cavalry impact phase
+    # ------------------------------------------------------------------
+
+    def _check_cavalry_impact(self, squad, side):
+        """Check if a squad qualifies for cavalry impact phase on zone entry."""
+        if getattr(squad, 'is_cavalry', False) and getattr(squad, 'state', '') == "charging":
+            self._impact_squads.append((squad, CAVALRY_IMPACT_FRAMES, side))
+
+    def _tick_impact_phase(self):
+        """Tick cavalry impact phase: charge attacks + knockback before pairing."""
+        self._impact_soldier_ids = set()
+        new_impact = []
+        cos_h = math.cos(self.heading)
+        sin_h = math.sin(self.heading)
+
+        for sq, timer, side in self._impact_squads:
+            if timer <= 0 or getattr(sq, 'is_destroyed', False):
+                continue
+
+            # Mark all soldiers in impact squad (excluded from pairing)
+            for s in sq.alive_soldiers:
+                self._impact_soldier_ids.add(id(s))
+
+            # Impact attacks every CAVALRY_IMPACT_ATTACK_INTERVAL frames
+            if timer % CAVALRY_IMPACT_ATTACK_INTERVAL == 0:
+                enemies = self._all_alive_b() if side == 'a' else self._all_alive_a()
+                for s in sq.alive_soldiers:
+                    # Find nearest enemy within melee range
+                    best_enemy = None
+                    best_dist = MELEE_RANGE * 2
+                    for e in enemies:
+                        d = distance(s.x, s.y, e.x, e.y)
+                        if d < best_dist:
+                            best_dist = d
+                            best_enemy = e
+                    if best_enemy and best_dist < MELEE_RANGE * 1.5:
+                        # Charge hit with is_charging=True
+                        self._resolve_hit(s, best_enemy, flank_mult=1.0, is_charging=True)
+                        # Knockback along heading direction
+                        sign = 1 if side == 'a' else -1
+                        best_enemy.x += cos_h * CAVALRY_IMPACT_KNOCKBACK * sign
+                        best_enemy.y += sin_h * CAVALRY_IMPACT_KNOCKBACK * sign
+
+            # Move impact soldiers forward at charge speed
+            move_speed = 1.2
+            sign = 1 if side == 'a' else -1
+            for s in sq.alive_soldiers:
+                s.x += cos_h * move_speed * sign
+                s.y += sin_h * move_speed * sign
+
+            new_impact.append((sq, timer - 1, side))
+
+        self._impact_squads = new_impact
 
     # ------------------------------------------------------------------
     # Pairing
@@ -173,8 +254,10 @@ class CombatZone:
             s.combat_state = "IDLE"
             s.combat_timer = 0
 
-        alive_a = self._all_alive_a()
-        alive_b = self._all_alive_b()
+        # Exclude cavalry in impact phase from pairing
+        impact_ids = self._impact_soldier_ids
+        alive_a = [s for s in self._all_alive_a() if id(s) not in impact_ids]
+        alive_b = [s for s in self._all_alive_b() if id(s) not in impact_ids]
 
         sorted_a = sorted(alive_a, key=self._lateral_key)
         sorted_b = sorted(alive_b, key=self._lateral_key)
@@ -213,6 +296,12 @@ class CombatZone:
         if not alive_a or not alive_b:
             self.terminate()
             return
+
+        # Smooth convergence: move soldiers toward zone target positions
+        self._converge_soldiers()
+
+        # Tick cavalry impact phase (before pairing)
+        self._tick_impact_phase()
 
         # Tick animation counter
         self._dust_frame += 1
@@ -384,14 +473,14 @@ class CombatZone:
         if killer_general:
             killer_general.kills += 1
 
-    def _resolve_hit(self, attacker, defender, flank_mult=1.0):
+    def _resolve_hit(self, attacker, defender, flank_mult=1.0, is_charging=False):
         """Resolve a melee hit using existing soldier.attack() math."""
         # Apply terrain defense modifier from the defender's squad
         defender_squad = self._squad_for_soldier(defender)
         defense_terrain_mult = 1.0
         if defender_squad:
             defense_terrain_mult = defender_squad.terrain_mods.get("melee_defense_mult", 1.0)
-        dmg = attacker.attack(defender, is_charging=False, flank_mult=flank_mult,
+        dmg = attacker.attack(defender, is_charging=is_charging, flank_mult=flank_mult,
                               defense_terrain_mult=defense_terrain_mult)
         if dmg > 0:
             # Spawn spark at hit position
@@ -411,10 +500,12 @@ class CombatZone:
 
     def _reassign_unpaired(self, paired_ids):
         """Match unpaired soldiers to new opponents or ally-assist slots."""
+        impact_ids = self._impact_soldier_ids
+        exclude = paired_ids | impact_ids
         free_a = [s for s in self._all_alive_a()
-                  if id(s) not in paired_ids and s.combat_state not in ("VICTORY_PAUSE", "SWINGING")]
+                  if id(s) not in exclude and s.combat_state not in ("VICTORY_PAUSE", "SWINGING")]
         free_b = [s for s in self._all_alive_b()
-                  if id(s) not in paired_ids and s.combat_state not in ("VICTORY_PAUSE", "SWINGING")]
+                  if id(s) not in exclude and s.combat_state not in ("VICTORY_PAUSE", "SWINGING")]
 
         # Priority 1: pair free soldiers with each other
         n = min(len(free_a), len(free_b))
@@ -522,7 +613,7 @@ class CombatZone:
         anchor_x = self.zone_center_x + cos_h * half_sep * sign + perp_x * flank_offset
         anchor_y = self.zone_center_y + sin_h * half_sep * sign + perp_y * flank_offset
 
-        self._place_squad(squad, anchor_x, anchor_y, facing)
+        self._set_zone_targets(squad, anchor_x, anchor_y, facing)
 
         # Rebuild soldier lookup and invalidate alive caches
         self._rebuild_soldier_map()
@@ -532,6 +623,9 @@ class CombatZone:
         # Morale shock to the opposing side
         for sq in (self.squads_b if side == 'a' else self.squads_a):
             sq.apply_morale_modifier(COMBAT_REINFORCEMENT_MORALE_SHOCK)
+
+        # Check for cavalry impact phase
+        self._check_cavalry_impact(squad, side)
         return True
 
     # ------------------------------------------------------------------
@@ -539,10 +633,10 @@ class CombatZone:
     # ------------------------------------------------------------------
 
     def extract_squad(self, squad):
-        """Remove a squad from the combat zone (voluntary retreat).
+        """Remove a squad from the combat zone (voluntary or forced retreat).
 
-        Clears combat state, reforms the squad at its pre-zone position,
-        and applies a morale penalty.
+        Clears combat state, reforms the squad at its pre-zone position
+        (unless routed), and applies a morale penalty for voluntary retreats.
         """
         # Clear combat state for this squad's soldiers only
         squad_soldier_ids = {id(s) for s in squad.soldiers}
@@ -551,11 +645,24 @@ class CombatZone:
             s.combat_state = "IDLE"
             s.combat_timer = 0
 
-        # Remove from pairs/assists involving this squad's soldiers
+        # Remove from pairs/assists and clear orphaned opponents
+        removed_pairs = [(a, b) for a, b in self.pairs
+                         if id(a) in squad_soldier_ids or id(b) in squad_soldier_ids]
         self.pairs = [(a, b) for a, b in self.pairs
                       if id(a) not in squad_soldier_ids and id(b) not in squad_soldier_ids]
         self.assists = [(h, a, e) for h, a, e in self.assists
                         if id(h) not in squad_soldier_ids]
+
+        # Clear paired_opponent on remaining soldiers that were paired with extracted ones
+        for a, b in removed_pairs:
+            if id(a) in squad_soldier_ids and b.alive:
+                b.paired_opponent = None
+                b.combat_state = "IDLE"
+                b.combat_timer = 0
+            elif id(b) in squad_soldier_ids and a.alive:
+                a.paired_opponent = None
+                a.combat_state = "IDLE"
+                a.combat_timer = 0
 
         # Remove from side lists
         if squad in self.squads_a:
@@ -564,18 +671,28 @@ class CombatZone:
             self.squads_b.remove(squad)
         squad.battleground = None
 
-        # Reform at pre-zone position
-        cx = getattr(squad, '_pre_zone_x', squad.x)
-        cy = getattr(squad, '_pre_zone_y', squad.y)
-        squad.x, squad.y = cx, cy
-        squad._reposition_formation()
-        for s in squad.alive_soldiers:
-            rox, roy = squad._rotate_offset(s.formation_x, s.formation_y)
-            s.x = cx + rox
-            s.y = cy + roy
+        # Invalidate alive caches
+        self._cached_alive_a = None
+        self._cached_alive_b = None
 
-        # Morale penalty for retreating
-        squad.apply_morale_modifier(RETREAT_MORALE_PENALTY)
+        # Don't reposition routed squads — let _do_rout() handle their movement
+        is_routed = getattr(squad, 'state', None) == "routed"
+        is_broken = getattr(squad, 'state', None) == "broken"
+
+        if not is_routed:
+            # Reform at pre-zone position
+            cx = getattr(squad, '_pre_zone_x', squad.x)
+            cy = getattr(squad, '_pre_zone_y', squad.y)
+            squad.x, squad.y = cx, cy
+            squad._reposition_formation()
+            for s in squad.alive_soldiers:
+                rox, roy = squad._rotate_offset(s.formation_x, s.formation_y)
+                s.x = cx + rox
+                s.y = cy + roy
+
+        # Only apply morale penalty for voluntary retreats (not broken/routed)
+        if not is_broken and not is_routed:
+            squad.apply_morale_modifier(RETREAT_MORALE_PENALTY)
 
         # If one side is now empty, terminate zone
         if not self.squads_a or not self.squads_b:
@@ -725,6 +842,20 @@ class CombatZone:
                 fade = max(0, 255 - int(255 * progress))
                 pygame.draw.line(surface, (255, 255, fade),
                                  (int(ax), int(ay)), (ex, ey),
+                                 max(1, camera.scale(2)))
+
+        # Cavalry impact charge trails
+        for sq, timer, side in self._impact_squads:
+            sign = 1 if side == 'a' else -1
+            cos_h = math.cos(self.heading)
+            sin_h = math.sin(self.heading)
+            for s in sq.alive_soldiers:
+                sx, sy = camera.world_to_screen(s.x, s.y)
+                trail_len = camera.scale(12)
+                ex = int(sx - cos_h * trail_len * sign)
+                ey = int(sy - sin_h * trail_len * sign)
+                pygame.draw.line(surface, (255, 200, 100, 180),
+                                 (int(sx), int(sy)), (ex, ey),
                                  max(1, camera.scale(2)))
 
     # ------------------------------------------------------------------

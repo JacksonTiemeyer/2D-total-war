@@ -27,6 +27,7 @@ from core.settings import (
     SEASON_SUMMER, SEASON_AUTUMN, SEASON_WINTER,
     SEASON_SUMMER_EXHAUSTION_MULT, SEASON_AUTUMN_MUD_CHANCE,
     SEASON_WINTER_RANGED_PENALTY, SEASON_WINTER_HARSH_WEATHER_CHANCE,
+    DEPLOYMENT_ZONE_WIDTH,
 )
 from core.camera import Camera
 from core.utils import distance, point_in_rect, angle_between, get_font
@@ -78,7 +79,7 @@ class BattleScene:
 
         # Deployment phase
         self.deployment_phase = True
-        self.deploy_zone = (50, 50, 500, BATTLE_MAP_HEIGHT - 100)  # left side zone
+        self.deploy_zone = (50, 50, DEPLOYMENT_ZONE_WIDTH, BATTLE_MAP_HEIGHT - 100)
         self._deploy_dragging = None  # squad being dragged during deployment
 
         # Hover tracking for targeting indicator (A8)
@@ -112,6 +113,9 @@ class BattleScene:
             g._all_enemy_generals = self.enemy_generals
         for g in self.enemy_generals:
             g._all_enemy_generals = self.player_generals
+
+        # Auto-attach generals to their nearest friendly squad
+        self._attach_generals_to_squads()
 
         # Patch A: initialize combat engine scaffold after armies and generals are deployed
         battle_runtime.initialize_runtime(self)
@@ -350,6 +354,26 @@ class BattleScene:
                                 g.kills += 1
                                 sq._dying_soldiers.append(s)
                                 sq.on_casualty()
+
+    def _attach_generals_to_squads(self):
+        """Auto-attach each general to their nearest friendly squad."""
+        for g in self.all_generals:
+            if not g.alive:
+                continue
+            if g.attached_squad and not g.attached_squad.is_destroyed:
+                continue  # already attached to a valid squad
+            g.attached_squad = None  # clear destroyed attachment
+            friendly = self.player_squads if g.team == 0 else self.enemy_squads
+            best_sq, best_dist = None, float('inf')
+            for sq in friendly:
+                if sq.is_destroyed:
+                    continue
+                d = distance(g.x, g.y, sq.x, sq.y)
+                if d < best_dist:
+                    best_dist = d
+                    best_sq = sq
+            if best_sq:
+                g.attached_squad = best_sq
 
     def _add_generals_to_zone(self, zone, squad, side):
         """If a squad has an attached general, add them to the combat zone."""
