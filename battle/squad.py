@@ -497,9 +497,9 @@ class Squad:
         if self.morale_immune:
             pass  # never rout, never break
         elif self.state == SquadState.ROUTED:
-            # Leave combat zone if routing
+            # Leave combat zone if routing (extract this squad only, not whole zone)
             if in_combat_zone:
-                self.battleground.terminate()
+                self.battleground.extract_squad(self)
                 in_combat_zone = False
             self._do_rout()
             return
@@ -518,7 +518,7 @@ class Squad:
 
         if self.state == SquadState.BROKEN:
             if in_combat_zone:
-                self.battleground.terminate()
+                self.battleground.extract_squad(self)
                 in_combat_zone = False
             self._do_movement(speed_mult=0.8)
             cx, cy = self.center
@@ -711,10 +711,10 @@ class Squad:
             if target_zone is not None and target_zone.active:
                 # Determine which side we're on (opposite to target)
                 side = 'a' if self.target_squad in target_zone.squads_b else 'b'
-                target_zone.add_reinforcement(self, side)
-                self.state = SquadState.FIGHTING
-                self.charge_timer = CHARGE_WINDOW_FRAMES
-                return
+                if target_zone.add_reinforcement(self, side):
+                    self.state = SquadState.FIGHTING
+                    self.charge_timer = CHARGE_WINDOW_FRAMES
+                    return
 
             self.state = SquadState.FIGHTING
             # Reduced charging damage window so melee clashes don't

@@ -77,6 +77,7 @@ TEAM_COLORS_LIGHT = {
 # Battle map
 BATTLE_MAP_WIDTH = 3000
 BATTLE_MAP_HEIGHT = 2000
+DEPLOYMENT_ZONE_WIDTH = 800            # width of player deployment zone
 
 # Campaign map (Phase 3: expanded for fantasy world)
 CAMPAIGN_MAP_WIDTH = 6000
@@ -212,11 +213,32 @@ COMBAT_ASSIST_FLANK_BONUS = 1.3      # damage bonus for 2v1 assist attacks
 COMBAT_ASSIST_RECOVERY_PENALTY = 0.3 # recovery time increase when outnumbered
 COMBAT_REINFORCEMENT_MORALE_SHOCK = -8  # morale hit when enemy reinforcements arrive
 
+# CombatZone micro-movement and pairing
+COMBAT_MICRO_MOVE_SPEED = 0.5           # speed for closing distance in melee pairs
+COMBAT_MICRO_MOVE_THRESHOLD = 0.8       # fraction of MELEE_RANGE before micro-move triggers
+COMBAT_ADVANCE_SPEED = 0.3              # speed for unpaired soldiers advancing toward enemy
+COMBAT_SPARK_TIMER = 8                  # frames for clash spark visual effect
+COMBAT_HIT_FLASH_TIMER = 6             # frames for hit flash visual effect
+COMBAT_DEATH_TIMER = 15                # frames for death animation
+COMBAT_SPLASH_DAMAGE_MULT = 0.4        # general splash damage as fraction of primary hit
+COMBAT_MAX_SQUADS_PER_SIDE = 4         # max squads per side in a single combat zone
+COMBAT_ZONE_CONVERGE_SPEED = 1.5       # per-frame speed for smooth zone entry convergence
+COMBAT_ZONE_CONVERGE_SNAP = 2.0        # snap to target when within this distance
+COMBAT_ASSIST_MAX_DISTANCE = 6         # max distance (in MELEE_RANGE multiples) for assists
+
+# CombatZone cavalry impact
+CAVALRY_IMPACT_FRAMES = 20              # duration of cavalry charge impact phase in zone
+CAVALRY_IMPACT_KNOCKBACK = 8.0          # knockback distance on impact hit
+CAVALRY_IMPACT_ATTACK_INTERVAL = 4      # frames between impact attacks per soldier
+
+# CombatZone generals
+GENERAL_ATTACK_COOLDOWN = 30             # frames between general attacks in combat zones
+GENERAL_ZONE_SPLASH_RADIUS = 20          # AoE radius for general attacks in combat zones
+
 # CombatZone retreat/extraction
 RETREAT_MORALE_PENALTY = -15             # morale hit when retreating from a combat zone
 RETREAT_SPEED_DEBUFF = 0.7               # speed multiplier after retreating from combat
 RETREAT_DEBUFF_FRAMES = 120              # duration of retreat speed debuff
-GENERAL_ZONE_SPLASH_RADIUS = 20          # AoE radius for general attacks in combat zones
 
 # Massive unit visual scale
 MASSIVE_VISUAL_SCALE = 1.8           # soldier radius multiplier for massive units
