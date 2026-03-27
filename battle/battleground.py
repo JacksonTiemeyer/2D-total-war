@@ -15,7 +15,9 @@ from core.settings import (
     COMBAT_RECOVER_FRAMES, COMBAT_VICTORY_PAUSE_FRAMES,
     COMBAT_ZONE_SEPARATION, COMBAT_ASSIST_FLANK_BONUS,
     COMBAT_ASSIST_RECOVERY_PENALTY, COMBAT_REINFORCEMENT_MORALE_SHOCK,
-    FLANK_DAMAGE_BONUS,
+    FLANK_DAMAGE_BONUS, FLANK_ANGLE_THRESHOLD,
+    REAR_DAMAGE_BONUS, REAR_ANGLE_THRESHOLD,
+    COMBAT_INITIAL_READY_STAGGER,
     RETREAT_MORALE_PENALTY, GENERAL_ZONE_SPLASH_RADIUS,
     COMBAT_MICRO_MOVE_SPEED, COMBAT_MICRO_MOVE_THRESHOLD,
     COMBAT_ADVANCE_SPEED, COMBAT_SPARK_TIMER, COMBAT_HIT_FLASH_TIMER,
@@ -301,9 +303,9 @@ class CombatZone:
             sa.paired_opponent = sb
             sb.paired_opponent = sa
             sa.combat_state = "READY"
-            sa.combat_timer = COMBAT_READY_FRAMES + random.randint(-2, 2)
+            sa.combat_timer = COMBAT_READY_FRAMES + random.randint(0, COMBAT_INITIAL_READY_STAGGER)
             sb.combat_state = "READY"
-            sb.combat_timer = COMBAT_READY_FRAMES + random.randint(-2, 2)
+            sb.combat_timer = COMBAT_READY_FRAMES + random.randint(0, COMBAT_INITIAL_READY_STAGGER)
             self.pairs.append((sa, sb))
 
         self.assists = []
@@ -505,14 +507,32 @@ class CombatZone:
         if killer_general:
             killer_general.kills += 1
 
+    def _compute_soldier_flank_mult(self, attacker, defender):
+        """Flank/rear bonus based on the attacker's position relative to defender's facing."""
+        dx = attacker.x - defender.x
+        dy = attacker.y - defender.y
+        if dx * dx + dy * dy < 0.01:
+            return 1.0
+        attack_angle = math.atan2(dy, dx)
+        angle_diff = abs(attack_angle - defender.facing_angle)
+        while angle_diff > math.pi:
+            angle_diff = abs(angle_diff - 2 * math.pi)
+        if angle_diff >= REAR_ANGLE_THRESHOLD:
+            return REAR_DAMAGE_BONUS
+        elif angle_diff >= FLANK_ANGLE_THRESHOLD:
+            return FLANK_DAMAGE_BONUS
+        return 1.0
+
     def _resolve_hit(self, attacker, defender, flank_mult=1.0, is_charging=False):
         """Resolve a melee hit using existing soldier.attack() math."""
+        # Per-soldier facing determines flank/rear bonus; stacks with any passed multiplier
+        effective_flank = flank_mult * self._compute_soldier_flank_mult(attacker, defender)
         # Apply terrain defense modifier from the defender's squad
         defender_squad = self._squad_for_soldier(defender)
         defense_terrain_mult = 1.0
         if defender_squad:
             defense_terrain_mult = defender_squad.terrain_mods.get("melee_defense_mult", 1.0)
-        dmg = attacker.attack(defender, is_charging=is_charging, flank_mult=flank_mult,
+        dmg = attacker.attack(defender, is_charging=is_charging, flank_mult=effective_flank,
                               defense_terrain_mult=defense_terrain_mult)
         if dmg > 0:
             # Spawn spark at hit position
@@ -714,9 +734,8 @@ class CombatZone:
         is_broken = getattr(squad, 'state', None) == "broken"
 
         if not is_routed:
-            # Reform at pre-zone position
-            cx = getattr(squad, '_pre_zone_x', squad.x)
-            cy = getattr(squad, '_pre_zone_y', squad.y)
+            # Reform around current center (where the squad actually is after combat)
+            cx, cy = squad.center
             squad.x, squad.y = cx, cy
             squad._reposition_formation()
             for s in squad.alive_soldiers:

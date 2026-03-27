@@ -125,7 +125,7 @@ MORALE_BREAK_THRESHOLD = 25
 MORALE_ROUT_THRESHOLD = 10
 MORALE_RECOVERY_RATE = 0.05
 MORALE_DAMAGE_LOSS = 0.3
-MORALE_CASUALTY_LOSS = 2.0
+MORALE_CASUALTY_LOSS = 4.5
 MORALE_GENERAL_AURA = 15.0
 MORALE_GENERAL_DEATH_PENALTY = 30.0
 
@@ -202,6 +202,9 @@ FORMATION_LOOSE_SPACING_MULT = 1.8   # wider spacing
 FORMATION_WEDGE_ANGLE = 0.6          # radians, half-angle of V
 COHESION_LIMIT = 20                  # max stray distance before auto-reform
 
+# Ranged ammo
+AMMO_PER_SOLDIER = 30                # arrows/bolts per soldier at battle start
+
 # Combat Zone (melee engagement animation)
 COMBAT_READY_FRAMES = 10             # frames in ready stance before swing
 COMBAT_SWING_FRAMES = 6              # frames for swing animation
@@ -217,6 +220,7 @@ COMBAT_REINFORCEMENT_MORALE_SHOCK = -8  # morale hit when enemy reinforcements a
 # are eligible to be paired into active duels. Rear-rank soldiers advance to fill gaps.
 # ~2 rows at default SOLDIER_SPACING of 12. Increase to let more ranks fight simultaneously.
 FRONT_RANK_DEPTH_THRESHOLD = SOLDIER_SPACING * 2.0
+COMBAT_INITIAL_READY_STAGGER = COMBAT_READY_FRAMES * 3  # max extra delay on first pairing
 
 # CombatZone micro-movement and pairing
 COMBAT_MICRO_MOVE_SPEED = 0.5           # speed for closing distance in melee pairs

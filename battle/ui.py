@@ -222,12 +222,20 @@ def draw_unit_cards(scene, surface, panel_y, small_font, btn_font):
         surface.blit(count_text, (cx + 2, card_y + 15))
 
         bar_x = cx + 2
-        bar_y_pos = card_y + card_h - 8
         bar_w = card_w - 4
+        # Morale bar
+        bar_y_pos = card_y + card_h - 8
         pygame.draw.rect(surface, (40, 40, 40), (bar_x, bar_y_pos, bar_w, 4))
         morale_w = int(bar_w * sq.morale / 100)
         morale_color = (50, 200, 50) if sq.morale > 50 else ((220, 200, 50) if sq.morale > 25 else (200, 50, 50))
         pygame.draw.rect(surface, morale_color, (bar_x, bar_y_pos, morale_w, 4))
+        # Ammo bar (ranged units only)
+        if sq.max_ammo > 0:
+            ammo_y_pos = bar_y_pos - 6
+            pygame.draw.rect(surface, (40, 40, 40), (bar_x, ammo_y_pos, bar_w, 3))
+            ammo_w = int(bar_w * sq.ammo / sq.max_ammo)
+            ammo_color = (210, 160, 50) if sq.ammo > sq.max_ammo * 0.3 else (180, 80, 30)
+            pygame.draw.rect(surface, ammo_color, (bar_x, ammo_y_pos, ammo_w, 3))
         scene._unit_card_rects.append(pygame.Rect(cx, card_y, card_w, card_h))
 
 
@@ -242,6 +250,10 @@ def draw_selection_panel(scene, surface, font, small_font, btn_font, panel_y):
         extra = f"WS:{sq.unit_stats.weapon_strength} AP:{sq.unit_stats.armor_penetration}%"
         if sq.unit_stats.ranged_strength > 0:
             extra += f"  RS:{sq.unit_stats.ranged_strength} RAP:{sq.unit_stats.ranged_armor_penetration}%"
+            if sq.max_ammo > 0:
+                ammo_pct = int(sq.ammo / sq.max_ammo * 100)
+                ammo_label = "OUT" if sq.ammo <= 0 else f"{sq.ammo}/{sq.max_ammo}"
+                extra += f"  Ammo:{ammo_label}({ammo_pct}%)"
         if sq.is_braced:
             extra += "  BRACED"
         if sq.max_mana > 0:

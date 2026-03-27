@@ -28,7 +28,7 @@ from core.settings import (
     COHESION_LIMIT, MASSIVE_VISUAL_SCALE,
     FPS, SPELL_ICON_SIZE, SPELL_RANGE_INDICATOR_COLOR,
     SPELL_AOE_DEFAULT_RADIUS, MANA_BAR_COLOR, MANA_BAR_LOW_COLOR,
-    GOLD,
+    GOLD, AMMO_PER_SOLDIER,
 )
 from core.utils import distance, angle_between, normalize, clamp, get_font
 from battle.soldier import Soldier
@@ -140,6 +140,15 @@ class Squad:
         self._dying_soldiers = []
         # Per-frame cache for alive_soldiers
         self._alive_cache = None
+
+        # Ranged ammo
+        if self.is_ranged:
+            ammo_per = getattr(unit_stats, 'ammo_per_soldier', AMMO_PER_SOLDIER)
+            self.max_ammo = ammo_per * len(self.soldiers)
+            self.ammo = self.max_ammo
+        else:
+            self.max_ammo = 0
+            self.ammo = 0
 
         # Terrain modifiers (set each frame by battle scene)
         self.terrain_mods = {
@@ -838,6 +847,9 @@ class Squad:
         if not self.target_squad or self.target_squad.is_destroyed:
             self.state = SquadState.IDLE
             return
+        if self.max_ammo > 0 and self.ammo <= 0:
+            self.state = SquadState.IDLE
+            return
         tx, ty = self.target_squad.center
         dist = distance(self.x, self.y, tx, ty)
         max_range = self.unit_stats.range_distance
@@ -897,6 +909,7 @@ class Squad:
                 target = random.choice(targets)
                 # Spawn projectile regardless of hit
                 self._spawn_projectile_effect(s.x, s.y, target.x, target.y)
+                self.ammo = max(0, self.ammo - 1)
                 dmg = s.ranged_attack(target, accuracy_mult=ranged_acc_mult,
                                        damage_mult=ranged_dmg_mult)
                 if dmg > 0 and not target.alive:
