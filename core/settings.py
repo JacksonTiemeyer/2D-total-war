@@ -213,6 +213,11 @@ COMBAT_ASSIST_FLANK_BONUS = 1.3      # damage bonus for 2v1 assist attacks
 COMBAT_ASSIST_RECOVERY_PENALTY = 0.3 # recovery time increase when outnumbered
 COMBAT_REINFORCEMENT_MORALE_SHOCK = -8  # morale hit when enemy reinforcements arrive
 
+# Front-rank depth filtering: only soldiers within this distance of the frontmost soldier
+# are eligible to be paired into active duels. Rear-rank soldiers advance to fill gaps.
+# ~2 rows at default SOLDIER_SPACING of 12. Increase to let more ranks fight simultaneously.
+FRONT_RANK_DEPTH_THRESHOLD = SOLDIER_SPACING * 2.0
+
 # CombatZone micro-movement and pairing
 COMBAT_MICRO_MOVE_SPEED = 0.5           # speed for closing distance in melee pairs
 COMBAT_MICRO_MOVE_THRESHOLD = 0.8       # fraction of MELEE_RANGE before micro-move triggers

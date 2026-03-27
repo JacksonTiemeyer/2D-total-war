@@ -25,6 +25,7 @@ from core.settings import (
     COMBAT_ZONE_CONVERGE_SPEED, COMBAT_ZONE_CONVERGE_SNAP,
     CAVALRY_IMPACT_FRAMES, CAVALRY_IMPACT_KNOCKBACK,
     CAVALRY_IMPACT_ATTACK_INTERVAL,
+    FRONT_RANK_DEPTH_THRESHOLD,
 )
 
 
@@ -246,6 +247,35 @@ class CombatZone:
         perp_y = math.cos(self.heading)
         return soldier.x * perp_x + soldier.y * perp_y
 
+    def _front_rank_soldiers(self, soldiers_a, soldiers_b):
+        """Return (front_a, front_b): only soldiers within FRONT_RANK_DEPTH_THRESHOLD of
+        their respective front line.
+
+        Side A advances along +heading, so their frontmost soldiers have the highest
+        projection onto the heading vector. Side B advances along -heading, so their
+        frontmost soldiers have the lowest projection.  At least one soldier per side is
+        always returned (the actual frontmost) to guarantee fights can start.
+        """
+        cos_h = math.cos(self.heading)
+        sin_h = math.sin(self.heading)
+
+        def proj(s):
+            return s.x * cos_h + s.y * sin_h
+
+        if soldiers_a:
+            max_proj = max(proj(s) for s in soldiers_a)
+            front_a = [s for s in soldiers_a if max_proj - proj(s) <= FRONT_RANK_DEPTH_THRESHOLD]
+        else:
+            front_a = []
+
+        if soldiers_b:
+            min_proj = min(proj(s) for s in soldiers_b)
+            front_b = [s for s in soldiers_b if proj(s) - min_proj <= FRONT_RANK_DEPTH_THRESHOLD]
+        else:
+            front_b = []
+
+        return front_a, front_b
+
     def _compute_pairs(self):
         """Match soldiers 1:1 along the front line by lateral position."""
         # Clear old pairing state
@@ -259,8 +289,10 @@ class CombatZone:
         alive_a = [s for s in self._all_alive_a() if id(s) not in impact_ids]
         alive_b = [s for s in self._all_alive_b() if id(s) not in impact_ids]
 
-        sorted_a = sorted(alive_a, key=self._lateral_key)
-        sorted_b = sorted(alive_b, key=self._lateral_key)
+        # Only pair front-rank soldiers; rear ranks advance and step up as gaps open
+        front_a, front_b = self._front_rank_soldiers(alive_a, alive_b)
+        sorted_a = sorted(front_a, key=self._lateral_key)
+        sorted_b = sorted(front_b, key=self._lateral_key)
 
         n = min(len(sorted_a), len(sorted_b))
         self.pairs = []
@@ -502,10 +534,12 @@ class CombatZone:
         """Match unpaired soldiers to new opponents or ally-assist slots."""
         impact_ids = self._impact_soldier_ids
         exclude = paired_ids | impact_ids
-        free_a = [s for s in self._all_alive_a()
-                  if id(s) not in exclude and s.combat_state not in ("VICTORY_PAUSE", "SWINGING")]
-        free_b = [s for s in self._all_alive_b()
-                  if id(s) not in exclude and s.combat_state not in ("VICTORY_PAUSE", "SWINGING")]
+        all_a = [s for s in self._all_alive_a()
+                 if id(s) not in exclude and s.combat_state not in ("VICTORY_PAUSE", "SWINGING")]
+        all_b = [s for s in self._all_alive_b()
+                 if id(s) not in exclude and s.combat_state not in ("VICTORY_PAUSE", "SWINGING")]
+        # Only front-rank soldiers are eligible for new assignments
+        free_a, free_b = self._front_rank_soldiers(all_a, all_b)
 
         # Priority 1: pair free soldiers with each other
         n = min(len(free_a), len(free_b))
