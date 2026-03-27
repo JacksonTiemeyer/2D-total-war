@@ -800,11 +800,9 @@ class CombatZone:
                 if getattr(g, '_avatar_active', False):
                     attack_power *= 2.5
 
-                # Primary hit
-                effective_armor = target.stats.armor * random.uniform(0.5, 1.0)
-                damage = max(1, attack_power * random.uniform(0.8, 1.2) - effective_armor * 0.3)
-                target.health -= damage
-                target.hit_flash_timer = COMBAT_HIT_FLASH_TIMER
+                # Primary hit — route through soldier.take_damage() for full pipeline
+                raw_dmg = attack_power * random.uniform(0.8, 1.2)
+                actual = target.take_damage(raw_dmg, g.unit_stats.armor_penetration)
 
                 # Spawn spark
                 self.spark_events.append({
@@ -814,8 +812,6 @@ class CombatZone:
                 })
 
                 # General attack visual effect
-                if not hasattr(g, '_attack_effects'):
-                    g._attack_effects = []
                 g._attack_effects.append({
                     "type": "slash",
                     "x": target.x, "y": target.y,
@@ -823,21 +819,18 @@ class CombatZone:
                     "timer": COMBAT_SPARK_TIMER,
                 })
 
-                if target.health <= 0:
+                if actual > 0 and not target.alive:
                     self._handle_kill(target, killer_general=g)
 
-                # Splash: hit 1-2 nearby enemies
+                # Splash: hit 1-2 nearby enemies (also via take_damage)
                 splash_count = 0
-                splash_dmg = damage * COMBAT_SPLASH_DAMAGE_MULT
+                splash_dmg = actual * COMBAT_SPLASH_DAMAGE_MULT
                 for es in enemies:
                     if es is target or not es.alive:
                         continue
                     if distance(target.x, target.y, es.x, es.y) < GENERAL_ZONE_SPLASH_RADIUS:
-                        es_armor = es.stats.armor * random.uniform(0.5, 1.0)
-                        s_dmg = max(1, splash_dmg - es_armor * 0.3)
-                        es.health -= s_dmg
-                        es.hit_flash_timer = COMBAT_HIT_FLASH_TIMER
-                        if es.health <= 0:
+                        s_actual = es.take_damage(splash_dmg, g.unit_stats.armor_penetration)
+                        if s_actual > 0 and not es.alive:
                             self._handle_kill(es, killer_general=g)
                         splash_count += 1
                         if splash_count >= 2:

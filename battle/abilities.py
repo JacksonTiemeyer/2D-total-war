@@ -162,20 +162,14 @@ class Bloodlust(Ability):
             cooldown_seconds=25, level_required=1, radius=0,
         )
         self.duration = 8 * 60
-        self.active_timer = 0
 
     def activate(self, general, friendly_squads, enemy_squads):
         if not self.ready:
             return False
         general._bloodlust_active = True
-        self.active_timer = self.duration
+        general._buff_timers["bloodlust_active"] = self.duration
         self.cooldown = self.cooldown_max
         return True
-
-    def tick(self):
-        super().tick()
-        if self.active_timer > 0:
-            self.active_timer -= 1
 
 
 class Intimidate(Ability):
@@ -344,16 +338,9 @@ class SappingFire(Ability):
         if not self.ready:
             return False
         general._sapping_fire = True
-        self.active_timer = self.duration
+        general._buff_timers["sapping_fire"] = self.duration
         self.cooldown = self.cooldown_max
         return True
-
-    def tick(self):
-        super().tick()
-        if self.active_timer > 0:
-            self.active_timer -= 1
-            if self.active_timer <= 0:
-                pass  # General's update will check the timer
 
 
 class ScoutReport(Ability):
@@ -372,16 +359,9 @@ class ScoutReport(Ability):
         if not self.ready:
             return False
         general._scout_active = True
-        self.active_timer = self.duration
+        general._buff_timers["scout_active"] = self.duration
         self.cooldown = self.cooldown_max
         return True
-
-    def tick(self):
-        super().tick()
-        if self.active_timer > 0:
-            self.active_timer -= 1
-            if self.active_timer <= 0:
-                pass  # General's update will check
 
 
 # ── Warlord Abilities ──────────────────────────────────────────────────
@@ -583,16 +563,9 @@ class IronDiscipline(Ability):
         if not self.ready:
             return False
         general._iron_discipline_active = True
-        self.active_timer = self.duration
+        general._buff_timers["iron_discipline_active"] = self.duration
         self.cooldown = self.cooldown_max
         return True
-
-    def tick(self):
-        super().tick()
-        if self.active_timer > 0:
-            self.active_timer -= 1
-            if self.active_timer <= 0:
-                pass  # General update clears the flag
 
 
 class DetachmentCommand(Ability):
@@ -702,16 +675,9 @@ class ManaShield(Ability):
         if not self.ready:
             return False
         general._mana_shield_active = True
-        self.active_timer = self.duration
+        general._buff_timers["mana_shield_active"] = self.duration
         self.cooldown = self.cooldown_max
         return True
-
-    def tick(self):
-        super().tick()
-        if self.active_timer > 0:
-            self.active_timer -= 1
-            if self.active_timer <= 0:
-                pass  # General update clears the flag
 
 
 class ElementalBlast(Ability):
@@ -993,20 +959,14 @@ class ChampionBloodlust(Ability):
             cooldown_seconds=25, level_required=1, radius=0,
         )
         self.duration = 8 * 60
-        self.active_timer = 0
 
     def activate(self, general, friendly_squads, enemy_squads):
         if not self.ready:
             return False
         general._bloodlust_active = True
-        self.active_timer = self.duration
+        general._buff_timers["bloodlust_active"] = self.duration
         self.cooldown = self.cooldown_max
         return True
-
-    def tick(self):
-        super().tick()
-        if self.active_timer > 0:
-            self.active_timer -= 1
 
 
 class ChampionIntimidate(Ability):
@@ -1166,16 +1126,9 @@ class Unstoppable(Ability):
         if not self.ready:
             return False
         general._unstoppable_active = True
-        self.active_timer = self.duration
+        general._buff_timers["unstoppable_active"] = self.duration
         self.cooldown = self.cooldown_max
         return True
-
-    def tick(self):
-        super().tick()
-        if self.active_timer > 0:
-            self.active_timer -= 1
-            if self.active_timer <= 0:
-                pass  # General update clears the flag
 
 
 class Slayer(Ability):
@@ -1194,16 +1147,9 @@ class Slayer(Ability):
         if not self.ready:
             return False
         general._slayer_active = True
-        self.active_timer = self.duration
+        general._buff_timers["slayer_active"] = self.duration
         self.cooldown = self.cooldown_max
         return True
-
-    def tick(self):
-        super().tick()
-        if self.active_timer > 0:
-            self.active_timer -= 1
-            if self.active_timer <= 0:
-                pass  # General update clears the flag
 
 
 class OneManArmy(Ability):
@@ -1222,16 +1168,9 @@ class OneManArmy(Ability):
         if not self.ready:
             return False
         general._one_man_army_active = True
-        self.active_timer = self.duration
+        general._buff_timers["one_man_army_active"] = self.duration
         self.cooldown = self.cooldown_max
         return True
-
-    def tick(self):
-        super().tick()
-        if self.active_timer > 0:
-            self.active_timer -= 1
-            if self.active_timer <= 0:
-                pass  # General update clears the flag
 
 
 class AvatarOfWar(Ability):
@@ -1327,16 +1266,9 @@ class ScoutNetwork(Ability):
         if not self.ready:
             return False
         general._scout_active = True
-        self.active_timer = self.duration
+        general._buff_timers["scout_active"] = self.duration
         self.cooldown = self.cooldown_max
         return True
-
-    def tick(self):
-        super().tick()
-        if self.active_timer > 0:
-            self.active_timer -= 1
-            if self.active_timer <= 0:
-                pass  # General update clears the flag
 
 
 class PoisonedWeapons(Ability):
@@ -1447,16 +1379,9 @@ class Sabotage(Ability):
         if not self.ready:
             return False
         general._sabotage_active = True
-        self.active_timer = self.duration
+        general._buff_timers["sabotage_active"] = self.duration
         self.cooldown = self.cooldown_max
         return True
-
-    def tick(self):
-        super().tick()
-        if self.active_timer > 0:
-            self.active_timer -= 1
-            if self.active_timer <= 0:
-                pass  # General update clears the flag
 
 
 class InciteRebellion(Ability):
@@ -2012,16 +1937,9 @@ class DeathAura(Ability):
         if not self.ready:
             return False
         general._death_aura_active = True
-        self.active_timer = self.duration
+        general._buff_timers["death_aura_active"] = self.duration
         self.cooldown = self.cooldown_max
         return True
-
-    def tick(self):
-        super().tick()
-        if self.active_timer > 0:
-            self.active_timer -= 1
-            if self.active_timer <= 0:
-                pass  # General update clears the flag
 
 
 class AnimateLegion(Ability):
@@ -2068,16 +1986,9 @@ class SoulHarvest(Ability):
         if not self.ready:
             return False
         general._soul_harvest_active = True
-        self.active_timer = self.duration
+        general._buff_timers["soul_harvest_active"] = self.duration
         self.cooldown = self.cooldown_max
         return True
-
-    def tick(self):
-        super().tick()
-        if self.active_timer > 0:
-            self.active_timer -= 1
-            if self.active_timer <= 0:
-                pass  # General update clears the flag
 
 
 class DreadLord(Ability):
@@ -2195,98 +2106,116 @@ def get_abilities_for_type(general_type):
 
 def get_warlord_abilities():
     """Warlord: army leadership and morale mastery."""
-    return [
+    abilities = [
         WarlordRally(),           # Lv 1
-        ForcedMarch(),            # Lv 5
-        WarlordSecondWind(),      # Lv 10
-        WarlordHoldTheLine(),     # Lv 15
-        InspiringCharge(),        # Lv 20
-        WarCry(),                 # Lv 25
-        IronDiscipline(),         # Lv 30
-        DetachmentCommand(),      # Lv 35
-        LegendaryCommander(),     # Lv 40
-        OverlordsDecree(),        # Lv 45
+        ForcedMarch(),            # Lv 2
+        WarlordSecondWind(),      # Lv 3
+        WarlordHoldTheLine(),     # Lv 4
+        InspiringCharge(),        # Lv 5
+        WarCry(),                 # Lv 6
+        IronDiscipline(),         # Lv 7
+        DetachmentCommand(),      # Lv 8
+        LegendaryCommander(),     # Lv 9
+        OverlordsDecree(),        # Lv 10
     ]
+    for i, ab in enumerate(abilities, start=1):
+        ab.level_required = i
+    return abilities
 
 
 def get_battlemage_abilities():
     """Battlemage: offensive magic and arcane power."""
-    return [
+    abilities = [
         ArcaneBolt(),             # Lv 1
-        ManaShield(),             # Lv 5
-        ElementalBlast(),         # Lv 10
-        EnchantWeapons(),         # Lv 15
-        SummonElemental(),        # Lv 20
-        ChainLightning(),         # Lv 25
-        ArcaneStorm(),            # Lv 30
-        MassTeleport(),           # Lv 35
-        MageLord(),               # Lv 40
-        Cataclysm(),              # Lv 45
+        ManaShield(),             # Lv 2
+        ElementalBlast(),         # Lv 3
+        EnchantWeapons(),         # Lv 4
+        SummonElemental(),        # Lv 5
+        ChainLightning(),         # Lv 6
+        ArcaneStorm(),            # Lv 7
+        MassTeleport(),           # Lv 8
+        MageLord(),               # Lv 9
+        Cataclysm(),              # Lv 10
     ]
+    for i, ab in enumerate(abilities, start=1):
+        ab.level_required = i
+    return abilities
 
 
 def get_champion_class_abilities():
     """Champion (player class): personal combat prowess."""
-    return [
+    abilities = [
         ChampionBloodlust(),      # Lv 1
-        ChampionIntimidate(),     # Lv 5
-        ChampionChallenge(),      # Lv 10
-        ChampionRampage(),        # Lv 15
-        Deathblow(),              # Lv 20
-        TerrifyingPresence(),     # Lv 25
-        Unstoppable(),            # Lv 30
-        Slayer(),                 # Lv 35
-        OneManArmy(),             # Lv 40
-        AvatarOfWar(),            # Lv 45
+        ChampionIntimidate(),     # Lv 2
+        ChampionChallenge(),      # Lv 3
+        ChampionRampage(),        # Lv 4
+        Deathblow(),              # Lv 5
+        TerrifyingPresence(),     # Lv 6
+        Unstoppable(),            # Lv 7
+        Slayer(),                 # Lv 8
+        OneManArmy(),             # Lv 9
+        AvatarOfWar(),            # Lv 10
     ]
+    for i, ab in enumerate(abilities, start=1):
+        ab.level_required = i
+    return abilities
 
 
 def get_rogue_abilities():
     """Rogue: stealth, sabotage, and assassination."""
-    return [
+    abilities = [
         Ambush(),                 # Lv 1
-        ScoutNetwork(),           # Lv 5
-        PoisonedWeapons(),        # Lv 10
-        Bribe(),                  # Lv 15
-        Shadowstep(),             # Lv 20
-        Sabotage(),               # Lv 25
-        InciteRebellion(),        # Lv 30
-        Assassinate(),            # Lv 35
-        MasterOfCoin(),           # Lv 40
-        ShadowWar(),              # Lv 45
+        ScoutNetwork(),           # Lv 2
+        PoisonedWeapons(),        # Lv 3
+        Bribe(),                  # Lv 4
+        Shadowstep(),             # Lv 5
+        Sabotage(),               # Lv 6
+        InciteRebellion(),        # Lv 7
+        Assassinate(),            # Lv 8
+        MasterOfCoin(),           # Lv 9
+        ShadowWar(),              # Lv 10
     ]
+    for i, ab in enumerate(abilities, start=1):
+        ab.level_required = i
+    return abilities
 
 
 def get_engineer_abilities():
     """Engineer: constructs, fortifications, and siege mastery."""
-    return [
+    abilities = [
         ConstructGolem(),         # Lv 1
-        FortifyPosition(),        # Lv 5
-        FieldArtillery(),         # Lv 10
-        ImprovedConstructs(),     # Lv 15
-        SiegeExpert(),            # Lv 20
-        MechanicalArmy(),         # Lv 25
-        ExperimentalWeaponry(),   # Lv 30
-        MobileFortress(),         # Lv 35
-        MasterEngineer(),         # Lv 40
-        WarMachine(),             # Lv 45
+        FortifyPosition(),        # Lv 2
+        FieldArtillery(),         # Lv 3
+        ImprovedConstructs(),     # Lv 4
+        SiegeExpert(),            # Lv 5
+        MechanicalArmy(),         # Lv 6
+        ExperimentalWeaponry(),   # Lv 7
+        MobileFortress(),         # Lv 8
+        MasterEngineer(),         # Lv 9
+        WarMachine(),             # Lv 10
     ]
+    for i, ab in enumerate(abilities, start=1):
+        ab.level_required = i
+    return abilities
 
 
 def get_necromancer_abilities():
     """Necromancer: death magic, life drain, and undead mastery."""
-    return [
+    abilities = [
         RaiseDead(),              # Lv 1
-        LifeDrain(),              # Lv 5
-        SummonWraith(),           # Lv 10
-        CorpseExplosion(),        # Lv 15
-        DeathAura(),              # Lv 20
-        AnimateLegion(),          # Lv 25
-        SoulHarvest(),            # Lv 30
-        DreadLord(),              # Lv 35
-        LichTransformation(),     # Lv 40
-        ArmyOfTheDamned(),        # Lv 45
+        LifeDrain(),              # Lv 2
+        SummonWraith(),           # Lv 3
+        CorpseExplosion(),        # Lv 4
+        DeathAura(),              # Lv 5
+        AnimateLegion(),          # Lv 6
+        SoulHarvest(),            # Lv 7
+        DreadLord(),              # Lv 8
+        LichTransformation(),     # Lv 9
+        ArmyOfTheDamned(),        # Lv 10
     ]
+    for i, ab in enumerate(abilities, start=1):
+        ab.level_required = i
+    return abilities
 
 
 def get_abilities_for_class(player_class):
@@ -2307,7 +2236,7 @@ def get_abilities_for_class(player_class):
 
 # ── Leveling ─────────────────────────────────────────────────────────────
 
-LEVEL_THRESHOLDS = [0, 3, 8, 15]  # XP needed for levels 1-4
+LEVEL_THRESHOLDS = [0, 3, 8, 15, 25, 40, 60, 85, 115, 150]  # XP for levels 1-10
 
 def xp_for_level(level):
     """Return XP threshold for a given level (1-indexed)."""

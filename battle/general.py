@@ -6,6 +6,10 @@ import pygame
 from core.settings import (
     GENERAL_RADIUS, GENERAL_HEALTH_MULTIPLIER,
     DUEL_RANGE, DUEL_CIRCLE_RADIUS, DUEL_DURATION_MAX,
+    DUEL_EXCHANGE_FRAMES, GENERAL_CHALLENGE_FRAMES,
+    GENERAL_AURA_TICK_FRAMES, GENERAL_AURA_AMOUNT,
+    GENERAL_FOLLOW_OFFSET_CHAMPION, GENERAL_FOLLOW_OFFSET_COMMANDER,
+    GENERAL_FOLLOW_OFFSET_DEFAULT,
     MELEE_RANGE, MORALE_GENERAL_AURA, MORALE_GENERAL_DEATH_PENALTY,
     TEAM_COLORS, GOLD, WHITE, BLACK, YELLOW, ORANGE,
     FPS, SPELL_ICON_SIZE, SPELL_RANGE_INDICATOR_COLOR,
@@ -113,6 +117,15 @@ class General:
         self._iron_discipline_active = False
         self._cooldown_reduction = 0  # percentage reduction from passives (Mage Lord, Master Engineer)
 
+        # Centralized timed buff tracker {flag_name: frames_remaining}
+        # When a timer reaches 0, setattr(self, f"_{flag_name}", False) is called.
+        self._buff_timers = {}
+        # Frame counters for rate-limited periodic effects
+        self._aura_tick = 0
+        self._frame_counter = 0
+        # Duel challenge handshake timer
+        self._challenge_timer = 0
+
         # Mana / Spellcasting
         self.max_mana = getattr(unit_stats, 'max_mana', 0)
         self.mana = self.max_mana
@@ -162,7 +175,9 @@ class General:
         self.target_y = squad.y
 
     def challenge_duel(self, other_general):
-        """Initiate a duel challenge (Three Kingdoms style)."""
+        """Initiate a duel challenge. Challenger enters CHALLENGED; duel starts
+        after GENERAL_CHALLENGE_FRAMES (opponent can't refuse — AI auto-accepts).
+        """
         if not other_general.alive or not self.alive:
             return False
         if self.duel_state != DuelState.NONE or other_general.duel_state != DuelState.NONE:
@@ -170,14 +185,16 @@ class General:
         dist_val = distance(self.x, self.y, other_general.x, other_general.y)
         if dist_val > DUEL_RANGE * 3:
             return False
-        self.duel_state = DuelState.ACTIVE
+        self.duel_state = DuelState.CHALLENGED
         self.duel_opponent = other_general
         self.duel_timer = 0
         self.duel_score = 0
-        other_general.duel_state = DuelState.ACTIVE
+        self._challenge_timer = GENERAL_CHALLENGE_FRAMES
+        other_general.duel_state = DuelState.CHALLENGED
         other_general.duel_opponent = self
         other_general.duel_timer = 0
         other_general.duel_score = 0
+        other_general._challenge_timer = GENERAL_CHALLENGE_FRAMES
         return True
 
     def update(self, friendly_squads, enemy_squads):
@@ -201,45 +218,42 @@ class General:
         for a in self.abilities:
             a.tick()
 
-        # Clear timed buff flags
-        bloodlust_ability = next(
-            (a for a in self.abilities if a.name == "Bloodlust"), None)
-        if bloodlust_ability and hasattr(bloodlust_ability, 'active_timer'):
-            if bloodlust_ability.active_timer <= 0:
-                self._bloodlust_active = False
+        # Centralized buff timer processing: decrement and auto-clear expired flags
+        for flag_name in list(self._buff_timers):
+            self._buff_timers[flag_name] -= 1
+            if self._buff_timers[flag_name] <= 0:
+                del self._buff_timers[flag_name]
+                setattr(self, f"_{flag_name}", False)
 
-        sapping = next(
-            (a for a in self.abilities if a.name == "Sapping Fire"), None)
-        if sapping and hasattr(sapping, 'active_timer'):
-            if sapping.active_timer <= 0:
-                self._sapping_fire = False
-
-        scout = next(
-            (a for a in self.abilities if a.name == "Scout Report"), None)
-        if scout and hasattr(scout, 'active_timer'):
-            if scout.active_timer <= 0:
-                self._scout_active = False
-
-        # Clear timed class ability buff flags
-        for a in self.abilities:
-            if hasattr(a, 'active_timer') and a.active_timer <= 0:
-                # Each ability is responsible for clearing its own flags via tick()
-                pass
-
-        # Duel takes priority
-        if self.duel_state == DuelState.ACTIVE:
+        # Duel takes priority (handles both CHALLENGED and ACTIVE states)
+        if self.duel_state in (DuelState.CHALLENGED, DuelState.ACTIVE):
             self._update_duel()
             return
 
-        # Track target squad - update position if still alive
-        if self.target_squad:
-            if self.target_squad.is_destroyed:
-                self.target_squad = None
-            else:
-                self.target_x = self.target_squad.x
-                self.target_y = self.target_squad.y
+        # --- Position logic: follow attached_squad at type-specific offset ---
+        # Determine follow offset by general role
+        is_champ = (self.general_type == "Champion" or
+                    self.player_class in ("champion",))
+        is_cmd = (self.general_type == "Commander" or
+                  self.player_class in ("warlord",))
+        if is_champ:
+            follow_offset = GENERAL_FOLLOW_OFFSET_CHAMPION
+        elif is_cmd:
+            follow_offset = GENERAL_FOLLOW_OFFSET_COMMANDER
+        else:
+            follow_offset = GENERAL_FOLLOW_OFFSET_DEFAULT
 
-        # Movement
+        if self.attached_squad and not self.attached_squad.is_destroyed:
+            cx, cy = self.attached_squad.center
+            facing = self.attached_squad.facing_angle
+            self.target_x = cx - math.cos(facing) * follow_offset
+            self.target_y = cy - math.sin(facing) * follow_offset
+        elif self.target_squad and not self.target_squad.is_destroyed:
+            # No attached squad: move toward explicit attack target
+            self.target_x = self.target_squad.x
+            self.target_y = self.target_squad.y
+
+        # Movement toward target
         dx = self.target_x - self.x
         dy = self.target_y - self.y
         dist_val = math.sqrt(dx * dx + dy * dy)
@@ -248,29 +262,14 @@ class General:
             self.x += nx * self.speed
             self.y += ny * self.speed
 
-        # If attached to a squad, follow slightly behind it
-        if self.attached_squad and not self.attached_squad.is_destroyed:
-            cx, cy = self.attached_squad.center
-            offset = 15
-            self.target_x = cx - math.cos(self.attached_squad.facing_angle) * offset
-            self.target_y = cy - math.sin(self.attached_squad.facing_angle) * offset
-
-        # Auto-challenge nearby enemy generals for a duel
-        if self.duel_state == DuelState.NONE:
-            for eg in getattr(self, '_all_enemy_generals', []):
-                if (eg.alive and eg.duel_state == DuelState.NONE
-                        and distance(self.x, self.y, eg.x, eg.y) < DUEL_RANGE):
-                    self.challenge_duel(eg)
-                    break
-
         # If in a combat zone, skip normal melee (zone handles general combat)
         if getattr(self, '_in_combat_zone', None) is not None:
             return
 
-        # General melee combat: attack nearby enemy soldiers
+        # General melee combat: attack nearby enemy soldiers (outside zones)
         if self.attack_cooldown == 0:
             best_target = None
-            best_dist = MELEE_RANGE * 2  # generals have slightly longer reach
+            best_dist = MELEE_RANGE * 2
             for sq in enemy_squads:
                 if sq.is_destroyed:
                     continue
@@ -288,68 +287,74 @@ class General:
                     attack_power *= 2.0
                 if self._avatar_active:
                     attack_power *= 2.5
-                # Soldier stores armor on its UnitStats (soldier.stats.armor),
-                # not as a direct attribute.
-                effective_armor = soldier.stats.armor * random.uniform(0.5, 1.0)
-                damage = max(1, attack_power * random.uniform(0.8, 1.2) - effective_armor * 0.3)
-                soldier.health -= damage
-                soldier.hit_flash_timer = 6
-                # Spawn attack visual effect (slash arc)
+                raw_dmg = attack_power * random.uniform(0.8, 1.2)
+                actual = soldier.take_damage(raw_dmg, self.unit_stats.armor_penetration)
                 self._attack_effects.append({
                     "type": "slash",
                     "x": soldier.x, "y": soldier.y,
                     "angle": math.atan2(soldier.y - self.y, soldier.x - self.x),
                     "timer": 8,
                 })
-                if soldier.health <= 0:
-                    soldier.alive = False
-                    soldier.death_timer = 15
-                    soldier.death_alpha = 1.0
+                if actual > 0 and not soldier.alive:
                     squad._dying_soldiers.append(soldier)
                     squad.on_casualty()
                     self.kills += 1
-                    # Soul Harvest: restore ability charges
                     if self._soul_harvest_active:
                         for a in self.abilities:
                             if hasattr(a, 'current_cooldown') and a.current_cooldown > 0:
                                 a.current_cooldown = max(0, a.current_cooldown - 60)
                 self.attack_cooldown = 30
 
-        # Apply morale aura to friendly squads
-        for sq in friendly_squads:
-            if sq.is_destroyed:
-                continue
-            d = distance(self.x, self.y, sq.x, sq.y)
-            if d < self.aura_radius:
-                sq.apply_morale_modifier(self.morale_aura * 0.01)
+        # Morale aura: applied once per second (not every frame) to avoid domination
+        self._aura_tick += 1
+        if self._aura_tick >= GENERAL_AURA_TICK_FRAMES:
+            self._aura_tick = 0
+            aura_amount = GENERAL_AURA_AMOUNT * (self.morale_aura / MORALE_GENERAL_AURA)
+            for sq in friendly_squads:
+                if sq.is_destroyed or sq.morale_immune:
+                    continue
+                if distance(self.x, self.y, sq.x, sq.y) < self.aura_radius:
+                    sq.apply_morale_modifier(aura_amount)
 
-        # Death Aura: DOT to nearby enemies (every 30 frames = 0.5s)
-        self._frame_counter = getattr(self, '_frame_counter', 0) + 1
+        # Death Aura: DOT to nearby enemies every 0.5s
+        self._frame_counter += 1
         if self._death_aura_active and self._frame_counter % 30 == 0:
             for sq in enemy_squads:
                 if sq.is_destroyed:
                     continue
-                d = distance(self.x, self.y, sq.x, sq.y)
-                if d < 150:
-                    for s in sq.alive_soldiers[:3]:  # damage up to 3 soldiers
-                        s.health -= 2
-                        if s.health <= 0:
-                            s.alive = False
+                if distance(self.x, self.y, sq.x, sq.y) < 150:
+                    for s in sq.alive_soldiers[:3]:
+                        actual = s.take_damage(2, 0)
+                        if actual > 0 and not s.alive:
                             sq.on_casualty()
 
-        # Unstoppable: immune to exhaustion effects (reset speed penalty)
+        # Unstoppable: immune to exhaustion speed penalty
         if self._unstoppable_active:
-            self.speed = self.unit_stats.speed  # override any speed debuff
+            self.speed = self.unit_stats.speed
 
     def _update_duel(self):
-        """Process one frame of a duel."""
+        """Process one frame of a duel (handles CHALLENGED and ACTIVE states)."""
         if not self.duel_opponent or not self.duel_opponent.alive:
             self.duel_state = DuelState.WON
             self.duels_won += 1
-            # XP awarded post-battle, not during battle
             return
 
         opp = self.duel_opponent
+
+        # CHALLENGED: move toward opponent, start ACTIVE when timer expires
+        if self.duel_state == DuelState.CHALLENGED:
+            self._challenge_timer -= 1
+            d = distance(self.x, self.y, opp.x, opp.y)
+            if d > DUEL_RANGE:
+                nx, ny = normalize(opp.x - self.x, opp.y - self.y)
+                self.x += nx * self.speed
+                self.y += ny * self.speed
+            if self._challenge_timer <= 0:
+                self.duel_state = DuelState.ACTIVE
+                self.duel_timer = 0
+            return
+
+        # ACTIVE: fight
         self.duel_timer += 1
 
         d = distance(self.x, self.y, opp.x, opp.y)
@@ -358,7 +363,7 @@ class General:
             self.x += nx * self.speed * 0.8
             self.y += ny * self.speed * 0.8
 
-        if self.duel_timer % 40 == 0 and self.attack_cooldown == 0:
+        if self.duel_timer % DUEL_EXCHANGE_FRAMES == 0 and self.attack_cooldown == 0:
             self._duel_clash(opp)
 
         if self.duel_timer >= DUEL_DURATION_MAX:
@@ -367,7 +372,6 @@ class General:
             elif opp.duel_score > self.duel_score:
                 self.take_damage(opp.melee_attack * 3)
             else:
-                # Tie: both take reduced damage
                 self.take_damage(opp.melee_attack)
                 opp.take_damage(self.melee_attack)
             self._end_duel()

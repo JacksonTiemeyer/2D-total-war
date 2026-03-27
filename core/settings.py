@@ -192,7 +192,16 @@ GENERAL_RADIUS = 8
 GENERAL_HEALTH_MULTIPLIER = 5.0
 DUEL_RANGE = 30
 DUEL_CIRCLE_RADIUS = 60
-DUEL_DURATION_MAX = 600  # frames (~10 seconds at 60fps)
+DUEL_DURATION_MAX = 360          # frames (~6 seconds — shorter, more intense)
+DUEL_EXCHANGE_FRAMES = 20        # frames between clash exchanges (was 40, now faster)
+GENERAL_CHALLENGE_FRAMES = 180   # frames opponent has to "accept" before duel starts
+# Morale aura: applied once per GENERAL_AURA_TICK_FRAMES (not every frame)
+GENERAL_AURA_TICK_FRAMES = 60    # apply aura once per second
+GENERAL_AURA_AMOUNT = 1.5        # morale added per tick (Commander gets *1.5 multiplier)
+# General follow offsets by role (world units behind attached squad)
+GENERAL_FOLLOW_OFFSET_CHAMPION = 20
+GENERAL_FOLLOW_OFFSET_COMMANDER = 60
+GENERAL_FOLLOW_OFFSET_DEFAULT = 40
 
 # Formations
 FORMATION_LINE_COLS_RATIO = 2.0      # wider than deep
